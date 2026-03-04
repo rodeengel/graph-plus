@@ -7,7 +7,7 @@ import {
   forceY,
   type Simulation,
 } from "d3-force";
-import { select } from "d3-selection";
+import { select, pointer } from "d3-selection";
 import { zoom, zoomIdentity, type ZoomBehavior, type D3ZoomEvent } from "d3-zoom";
 import { drag, type D3DragEvent } from "d3-drag";
 import type { App } from "obsidian";
@@ -69,7 +69,7 @@ export class GraphRenderer2D {
       .force("charge", forceManyBody().strength(settings.chargeStrength))
       .force("x", forceX(this.width / 2).strength(settings.centerForce * 0.1))
       .force("y", forceY(this.height / 2).strength(settings.centerForce * 0.1))
-      .force("collide", forceCollide(settings.nodeSize + 2))
+      .force("collide", forceCollide(settings.nodeSize + 2).strength(settings.collisionForce))
       .on("tick", () => this.render());
 
     if (!settings.animate) {
@@ -94,8 +94,11 @@ export class GraphRenderer2D {
         event.subject.fy = event.subject.y;
       })
       .on("drag", (event: D3DragEvent<HTMLCanvasElement, unknown, GraphNode>) => {
-        event.subject.fx = event.x;
-        event.subject.fy = event.y;
+        // Use pointer to get raw mouse position, then inverse-transform to graph space
+        const [mx, my] = pointer(event.sourceEvent, this.canvas);
+        const t = this.transform;
+        event.subject.fx = (mx - t.x) / t.k;
+        event.subject.fy = (my - t.y) / t.k;
       })
       .on("end", (event: D3DragEvent<HTMLCanvasElement, unknown, GraphNode>) => {
         if (!event.active) this.simulation.alphaTarget(0);
@@ -168,7 +171,10 @@ export class GraphRenderer2D {
     }
 
     const collide = this.simulation.force("collide") as any;
-    if (collide) collide.radius(this.settings.nodeSize + 2);
+    if (collide) {
+      collide.radius(this.settings.nodeSize + 2);
+      collide.strength(this.settings.collisionForce);
+    }
 
     this.simulation.alpha(0.3).restart();
 
@@ -293,7 +299,7 @@ export class GraphRenderer2D {
           this.drawArrowhead(ctx, cpx, cpy, tx, ty, targetRadius, color, alpha);
         }
 
-        if (showLabels && link.type !== UNTYPED_LINK_KEY && t.k > 0.5) {
+        if (showLabels && link.type !== UNTYPED_LINK_KEY && t.k > this.settings.edgeLabelThreshold) {
           const labelX = (sx + 2 * cpx + tx) / 4;
           const labelY = (sy + 2 * cpy + ty) / 4;
           ctx.font = `${10 / Math.max(t.k, 0.5)}px sans-serif`;
@@ -312,7 +318,7 @@ export class GraphRenderer2D {
           this.drawArrowhead(ctx, sx, sy, tx, ty, targetRadius, color, alpha);
         }
 
-        if (showLabels && link.type !== UNTYPED_LINK_KEY && t.k > 0.5) {
+        if (showLabels && link.type !== UNTYPED_LINK_KEY && t.k > this.settings.edgeLabelThreshold) {
           const lmx = (sx + tx) / 2;
           const lmy = (sy + ty) / 2;
           ctx.font = `${10 / Math.max(t.k, 0.5)}px sans-serif`;

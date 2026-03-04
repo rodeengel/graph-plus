@@ -96,7 +96,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Text fade threshold")
+      .setName("Node label zoom")
       .setDesc("Zoom level at which node labels appear (0.1 - 5)")
       .addSlider((slider) =>
         slider
@@ -105,6 +105,20 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           .setDynamicTooltip()
           .onChange(async (value) => {
             this.plugin.settings.textFadeThreshold = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Edge label zoom")
+      .setDesc("Zoom level at which edge labels appear (0.1 - 5)")
+      .addSlider((slider) =>
+        slider
+          .setLimits(0.1, 5, 0.1)
+          .setValue(this.plugin.settings.edgeLabelThreshold)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            this.plugin.settings.edgeLabelThreshold = value;
             await this.plugin.saveSettings();
           })
       );
@@ -205,10 +219,10 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Center force")
-      .setDesc("Pull nodes toward center (0-1)")
+      .setDesc("Pull nodes toward center (0-2)")
       .addSlider((slider) =>
         slider
-          .setLimits(0, 1, 0.05)
+          .setLimits(0, 2, 0.05)
           .setValue(this.plugin.settings.centerForce)
           .setDynamicTooltip()
           .onChange(async (value) => {
@@ -219,10 +233,10 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Repel force")
-      .setDesc("Push nodes apart (10-500, higher = more spread)")
+      .setDesc("Push nodes apart (10-2000, higher = more spread)")
       .addSlider((slider) =>
         slider
-          .setLimits(10, 500, 10)
+          .setLimits(10, 2000, 10)
           .setValue(Math.abs(this.plugin.settings.chargeStrength))
           .setDynamicTooltip()
           .onChange(async (value) => {
@@ -233,10 +247,10 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Link force")
-      .setDesc("Strength of link attraction (0-1)")
+      .setDesc("Strength of link attraction (0-2)")
       .addSlider((slider) =>
         slider
-          .setLimits(0, 1, 0.05)
+          .setLimits(0, 2, 0.05)
           .setValue(this.plugin.settings.linkStrength)
           .setDynamicTooltip()
           .onChange(async (value) => {
@@ -247,14 +261,28 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Link distance")
-      .setDesc("Preferred distance between linked nodes (20-200)")
+      .setDesc("Preferred distance between linked nodes (5-500)")
       .addSlider((slider) =>
         slider
-          .setLimits(20, 200, 5)
+          .setLimits(5, 500, 5)
           .setValue(this.plugin.settings.linkDistance)
           .setDynamicTooltip()
           .onChange(async (value) => {
             this.plugin.settings.linkDistance = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Collision force")
+      .setDesc("Prevent node overlap (0-1)")
+      .addSlider((slider) =>
+        slider
+          .setLimits(0, 1, 0.05)
+          .setValue(this.plugin.settings.collisionForce)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            this.plugin.settings.collisionForce = value;
             await this.plugin.saveSettings();
           })
       );

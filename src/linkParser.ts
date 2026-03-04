@@ -269,32 +269,32 @@ export function matchesQuery(node: GraphNode, query: string): boolean {
 
   // path: prefix
   if (q.startsWith("path:")) {
-    const prefix = q.slice(5);
+    const prefix = q.slice(5).trim();
     return node.id.toLowerCase().startsWith(prefix.toLowerCase());
   }
 
   // file: pattern
   if (q.startsWith("file:")) {
-    const pattern = q.slice(5).toLowerCase();
+    const pattern = q.slice(5).trim().toLowerCase();
     return node.name.toLowerCase().includes(pattern);
   }
 
   // tag:#name
   if (q.startsWith("tag:#")) {
-    const tag = q.slice(5).toLowerCase();
+    const tag = q.slice(5).trim().toLowerCase();
     return node.tags.some((t) => t.toLowerCase() === tag || t.toLowerCase().startsWith(tag + "/"));
   }
   // Also support tag:name (without #)
   if (q.startsWith("tag:")) {
-    const tag = q.slice(4).toLowerCase();
+    const tag = q.slice(4).trim().toLowerCase();
     return node.tags.some((t) => t.toLowerCase() === tag || t.toLowerCase().startsWith(tag + "/"));
   }
 
-  // [property:value] — frontmatter property match
+  // [property:value] — frontmatter property match (strips quotes from value)
   const propMatch = q.match(/^\[(\w+):(.+)\]$/);
   if (propMatch) {
     const prop = propMatch[1].toLowerCase();
-    const val = propMatch[2].toLowerCase().trim();
+    const val = propMatch[2].trim().replace(/^["']|["']$/g, "").toLowerCase();
     const nodeVals = node.properties[prop];
     if (!nodeVals) return false;
     return nodeVals.some((v) => v.includes(val));
@@ -399,6 +399,9 @@ export function filterGraphData(
   for (const node of filteredNodes) {
     node.linkCount = linkCounts.get(node.id) ?? 0;
   }
+
+  // Reassign curvatures for parallel edges among visible links only
+  assignCurvatures(visibleLinks);
 
   return {
     nodes: filteredNodes,

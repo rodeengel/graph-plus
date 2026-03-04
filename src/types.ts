@@ -51,6 +51,8 @@ export interface GraphLinkTypesSettings {
   showOrphans: boolean;
   linkThickness: number;
   textFadeThreshold: number;
+  edgeLabelThreshold: number;
+  collisionForce: number;
   animate: boolean;
   nodeColor: string;
   nodeColorHover: string;
@@ -75,6 +77,8 @@ export const DEFAULT_SETTINGS: GraphLinkTypesSettings = {
   showOrphans: true,
   linkThickness: 1.5,
   textFadeThreshold: 1.0,
+  edgeLabelThreshold: 0.5,
+  collisionForce: 0.7,
   animate: true,
   nodeColor: "#888888",
   nodeColorHover: "#7b6cd9",

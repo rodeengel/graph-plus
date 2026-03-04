@@ -244,8 +244,14 @@ export class GraphLinkTypesView extends ItemView {
       else this.pushDataToRenderer();
     });
 
-    this.buildSlider(displayContent, "Text fade", this.settings.textFadeThreshold, 0.1, 5, 0.1, async (val) => {
+    this.buildSlider(displayContent, "Node label zoom", this.settings.textFadeThreshold, 0.1, 5, 0.1, async (val) => {
       this.settings.textFadeThreshold = val;
+      await this.saveSettings();
+      if (this.renderer2D) this.renderer2D.updateSettings();
+    });
+
+    this.buildSlider(displayContent, "Edge label zoom", this.settings.edgeLabelThreshold, 0.1, 5, 0.1, async (val) => {
+      this.settings.edgeLabelThreshold = val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
     });
@@ -267,27 +273,33 @@ export class GraphLinkTypesView extends ItemView {
     // --- Forces (collapsible) ---
     const forcesContent = this.createCollapsibleSection(panel, "Forces", false);
 
-    this.buildSlider(forcesContent, "Center force", this.settings.centerForce, 0, 1, 0.05, async (val) => {
+    this.buildSlider(forcesContent, "Center force", this.settings.centerForce, 0, 2, 0.05, async (val) => {
       this.settings.centerForce = val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
     });
 
-    // Repel force: display as positive (10-500), store as negative internally
-    this.buildSlider(forcesContent, "Repel force", Math.abs(this.settings.chargeStrength), 10, 500, 10, async (val) => {
+    // Repel force: display as positive, store as negative internally
+    this.buildSlider(forcesContent, "Repel force", Math.abs(this.settings.chargeStrength), 10, 2000, 10, async (val) => {
       this.settings.chargeStrength = -val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
     });
 
-    this.buildSlider(forcesContent, "Link force", this.settings.linkStrength, 0, 1, 0.05, async (val) => {
+    this.buildSlider(forcesContent, "Link force", this.settings.linkStrength, 0, 2, 0.05, async (val) => {
       this.settings.linkStrength = val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
     });
 
-    this.buildSlider(forcesContent, "Link distance", this.settings.linkDistance, 20, 200, 5, async (val) => {
+    this.buildSlider(forcesContent, "Link distance", this.settings.linkDistance, 5, 500, 5, async (val) => {
       this.settings.linkDistance = val;
+      await this.saveSettings();
+      if (this.renderer2D) this.renderer2D.updateSettings();
+    });
+
+    this.buildSlider(forcesContent, "Collision", this.settings.collisionForce, 0, 1, 0.05, async (val) => {
+      this.settings.collisionForce = val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
     });
