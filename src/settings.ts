@@ -96,6 +96,47 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Link thickness")
+      .setDesc("Width of graph edges (0.5 - 5)")
+      .addSlider((slider) =>
+        slider
+          .setLimits(0.5, 5, 0.5)
+          .setValue(this.plugin.settings.linkThickness)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            this.plugin.settings.linkThickness = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Node color")
+      .setDesc("Default color for graph nodes")
+      .addColorPicker((picker) =>
+        picker
+          .setValue(this.plugin.settings.nodeColor)
+          .onChange(async (value) => {
+            this.plugin.settings.nodeColor = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Node hover color")
+      .setDesc("Color for hovered/active nodes (2D)")
+      .addColorPicker((picker) =>
+        picker
+          .setValue(this.plugin.settings.nodeColorHover)
+          .onChange(async (value) => {
+            this.plugin.settings.nodeColorHover = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    // --- 2D Display ---
+    containerEl.createEl("h3", { text: "2D Display" });
+
+    new Setting(containerEl)
       .setName("Node label zoom")
       .setDesc("Zoom level at which node labels appear (0.1 - 5)")
       .addSlider((slider) =>
@@ -123,23 +164,40 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           })
       );
 
+    // --- 3D Display ---
+    containerEl.createEl("h3", { text: "3D Display" });
+
     new Setting(containerEl)
-      .setName("Link thickness")
-      .setDesc("Width of graph edges (0.5 - 5)")
+      .setName("Node scale")
+      .setDesc("Size of 3D node spheres (1 - 20)")
       .addSlider((slider) =>
         slider
-          .setLimits(0.5, 5, 0.5)
-          .setValue(this.plugin.settings.linkThickness)
+          .setLimits(1, 20, 1)
+          .setValue(this.plugin.settings.nodeRelSize3D)
           .setDynamicTooltip()
           .onChange(async (value) => {
-            this.plugin.settings.linkThickness = value;
+            this.plugin.settings.nodeRelSize3D = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Node opacity")
+      .setDesc("Opacity of 3D nodes (0 - 1)")
+      .addSlider((slider) =>
+        slider
+          .setLimits(0, 1, 0.05)
+          .setValue(this.plugin.settings.nodeOpacity3D)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            this.plugin.settings.nodeOpacity3D = value;
             await this.plugin.saveSettings();
           })
       );
 
     new Setting(containerEl)
       .setName("Link opacity")
-      .setDesc("Opacity of graph edges (0 - 1)")
+      .setDesc("Opacity of 3D links (0 - 1)")
       .addSlider((slider) =>
         slider
           .setLimits(0, 1, 0.05)
@@ -147,30 +205,6 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           .setDynamicTooltip()
           .onChange(async (value) => {
             this.plugin.settings.linkOpacity = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Node color")
-      .setDesc("Default color for graph nodes")
-      .addColorPicker((picker) =>
-        picker
-          .setValue(this.plugin.settings.nodeColor)
-          .onChange(async (value) => {
-            this.plugin.settings.nodeColor = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Node hover color")
-      .setDesc("Color for hovered/active nodes")
-      .addColorPicker((picker) =>
-        picker
-          .setValue(this.plugin.settings.nodeColorHover)
-          .onChange(async (value) => {
-            this.plugin.settings.nodeColorHover = value;
             await this.plugin.saveSettings();
           })
       );

@@ -20,6 +20,7 @@ export class GraphLinkTypesView extends ItemView {
   private searchQuery: string = "";
   private sidebarVisible: boolean = true;
   private modeBtnEl: HTMLElement | null = null;
+  private toggleBtnEl: HTMLElement | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -55,12 +56,12 @@ export class GraphLinkTypesView extends ItemView {
     this.canvasContainerEl = body.createDiv({ cls: "glt-canvas-container" });
 
     // Floating sidebar toggle button
-    const toggleBtn = this.canvasContainerEl.createEl("button", {
+    this.toggleBtnEl = this.canvasContainerEl.createEl("button", {
       text: "\u2261",
       cls: "glt-sidebar-toggle",
       attr: { "aria-label": "Toggle sidebar" },
     });
-    toggleBtn.addEventListener("click", () => {
+    this.toggleBtnEl.addEventListener("click", () => {
       this.sidebarVisible = !this.sidebarVisible;
       if (this.filterPanelEl) {
         this.filterPanelEl.style.display = this.sidebarVisible ? "" : "none";
@@ -236,22 +237,8 @@ export class GraphLinkTypesView extends ItemView {
       row.createEl("span", { text: `(${count})`, cls: "glt-link-count" });
     }
 
-    // --- Display (collapsible) ---
+    // --- Display (shared, collapsible) ---
     const displayContent = this.createCollapsibleSection(panel, "Display", false);
-
-    this.buildToggle(displayContent, "Edge labels", this.settings.showLabels, async (val) => {
-      this.settings.showLabels = val;
-      await this.saveSettings();
-      if (this.renderer2D) this.renderer2D.updateSettings();
-      if (this.renderer3D) this.renderer3D.updateSettings();
-    });
-
-    this.buildToggle(displayContent, "Node labels", this.settings.showNodeLabels, async (val) => {
-      this.settings.showNodeLabels = val;
-      await this.saveSettings();
-      if (this.renderer2D) this.renderer2D.updateSettings();
-      if (this.renderer3D) this.renderer3D.updateSettings();
-    });
 
     this.buildToggle(displayContent, "Arrows", this.settings.showArrows, async (val) => {
       this.settings.showArrows = val;
@@ -265,18 +252,6 @@ export class GraphLinkTypesView extends ItemView {
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
       if (this.renderer3D) this.renderer3D.updateSettings();
-    });
-
-    this.buildSlider(displayContent, "Node label zoom", this.settings.textFadeThreshold, 0.1, 5, 0.1, async (val) => {
-      this.settings.textFadeThreshold = val;
-      await this.saveSettings();
-      if (this.renderer2D) this.renderer2D.updateSettings();
-    });
-
-    this.buildSlider(displayContent, "Edge label zoom", this.settings.edgeLabelThreshold, 0.1, 5, 0.1, async (val) => {
-      this.settings.edgeLabelThreshold = val;
-      await this.saveSettings();
-      if (this.renderer2D) this.renderer2D.updateSettings();
     });
 
     this.buildSlider(displayContent, "Node size", this.settings.nodeSize, 1, 20, 1, async (val) => {
@@ -293,10 +268,51 @@ export class GraphLinkTypesView extends ItemView {
       if (this.renderer3D) this.renderer3D.updateSettings();
     });
 
-    this.buildSlider(displayContent, "Link opacity", this.settings.linkOpacity, 0, 1, 0.05, async (val) => {
-      this.settings.linkOpacity = val;
+    // --- 2D Display (collapsible) ---
+    const display2DContent = this.createCollapsibleSection(panel, "2D Display", false);
+
+    this.buildToggle(display2DContent, "Edge labels", this.settings.showLabels, async (val) => {
+      this.settings.showLabels = val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
+    });
+
+    this.buildToggle(display2DContent, "Node labels", this.settings.showNodeLabels, async (val) => {
+      this.settings.showNodeLabels = val;
+      await this.saveSettings();
+      if (this.renderer2D) this.renderer2D.updateSettings();
+    });
+
+    this.buildSlider(display2DContent, "Node label zoom", this.settings.textFadeThreshold, 0.1, 5, 0.1, async (val) => {
+      this.settings.textFadeThreshold = val;
+      await this.saveSettings();
+      if (this.renderer2D) this.renderer2D.updateSettings();
+    });
+
+    this.buildSlider(display2DContent, "Edge label zoom", this.settings.edgeLabelThreshold, 0.1, 5, 0.1, async (val) => {
+      this.settings.edgeLabelThreshold = val;
+      await this.saveSettings();
+      if (this.renderer2D) this.renderer2D.updateSettings();
+    });
+
+    // --- 3D Display (collapsible) ---
+    const display3DContent = this.createCollapsibleSection(panel, "3D Display", false);
+
+    this.buildSlider(display3DContent, "Node scale", this.settings.nodeRelSize3D, 1, 20, 1, async (val) => {
+      this.settings.nodeRelSize3D = val;
+      await this.saveSettings();
+      if (this.renderer3D) this.renderer3D.updateSettings();
+    });
+
+    this.buildSlider(display3DContent, "Node opacity", this.settings.nodeOpacity3D, 0, 1, 0.05, async (val) => {
+      this.settings.nodeOpacity3D = val;
+      await this.saveSettings();
+      if (this.renderer3D) this.renderer3D.updateSettings();
+    });
+
+    this.buildSlider(display3DContent, "Link opacity", this.settings.linkOpacity, 0, 1, 0.05, async (val) => {
+      this.settings.linkOpacity = val;
+      await this.saveSettings();
       if (this.renderer3D) this.renderer3D.updateSettings();
     });
 
@@ -449,6 +465,9 @@ export class GraphLinkTypesView extends ItemView {
 
   private initRenderer(): void {
     if (!this.canvasContainerEl) return;
+    // Detach toggle button before emptying so it's not destroyed
+    const toggleBtn = this.toggleBtnEl;
+    if (toggleBtn) toggleBtn.remove();
     this.canvasContainerEl.empty();
 
     if (this.currentMode === "2d") {
@@ -464,6 +483,8 @@ export class GraphLinkTypesView extends ItemView {
         this.settings
       );
     }
+    // Re-append toggle button after renderer creates its elements
+    if (toggleBtn) this.canvasContainerEl.appendChild(toggleBtn);
   }
 
   private pushDataToRenderer(): void {

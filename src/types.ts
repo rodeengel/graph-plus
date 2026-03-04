@@ -50,7 +50,9 @@ export interface GraphLinkTypesSettings {
   existingOnly: boolean;
   showOrphans: boolean;
   linkThickness: number;
-  linkOpacity: number;       // 0-1, opacity of links (mainly for 3D)
+  linkOpacity: number;       // 0-1, opacity of links (3D)
+  nodeOpacity3D: number;     // 0-1, opacity of nodes (3D)
+  nodeRelSize3D: number;     // sphere scale factor (3D)
   textFadeThreshold: number;
   edgeLabelThreshold: number;
   collisionForce: number;
@@ -78,6 +80,8 @@ export const DEFAULT_SETTINGS: GraphLinkTypesSettings = {
   showOrphans: true,
   linkThickness: 1.5,
   linkOpacity: 1.0,
+  nodeOpacity3D: 1.0,
+  nodeRelSize3D: 4,
   textFadeThreshold: 1.0,
   edgeLabelThreshold: 0.5,
   collisionForce: 0.7,

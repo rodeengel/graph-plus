@@ -18,6 +18,8 @@ interface ForceGraph3DInstance {
   linkDirectionalArrowLength(n: number | ((link: any) => number)): ForceGraph3DInstance;
   linkDirectionalArrowRelPos(n: number): ForceGraph3DInstance;
   linkOpacity(n: number): ForceGraph3DInstance;
+  nodeOpacity(n: number): ForceGraph3DInstance;
+  nodeRelSize(n: number): ForceGraph3DInstance;
   onNodeClick(fn: (node: any) => void): ForceGraph3DInstance;
   onNodeRightClick(fn: (node: any) => void): ForceGraph3DInstance;
   d3Force(name: string, force?: any): any;
@@ -93,6 +95,8 @@ export class GraphRenderer3D {
         .linkDirectionalArrowLength(this.settings.showArrows ? 6 * (this.settings.linkThickness / 1.5) : 0)
         .linkDirectionalArrowRelPos(1)
         .linkOpacity(this.settings.linkOpacity)
+        .nodeOpacity(this.settings.nodeOpacity3D)
+        .nodeRelSize(this.settings.nodeRelSize3D)
         .onNodeClick((node: any) => {
           this.app.workspace.openLinkText(node.id, "", false);
         })
@@ -164,6 +168,8 @@ export class GraphRenderer3D {
       .linkWidth(this.settings.linkThickness)
       .linkDirectionalArrowLength(this.settings.showArrows ? 6 * (this.settings.linkThickness / 1.5) : 0)
       .linkOpacity(this.settings.linkOpacity)
+      .nodeOpacity(this.settings.nodeOpacity3D)
+      .nodeRelSize(this.settings.nodeRelSize3D)
       .nodeVal((node: any) => {
         const base = this.settings.nodeSize;
         if (!this.settings.scaleNodeByLinks || !node.linkCount) return base;
