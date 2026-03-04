@@ -80,7 +80,10 @@ export class GraphRenderer3D {
         .nodeVal((node: any) => {
           const base = this.settings.nodeSize;
           if (!this.settings.scaleNodeByLinks || !node.linkCount) return base;
-          return base * (1 + Math.sqrt(Math.max(0, node.linkCount - 1)) * 0.5);
+          // Cube the scale factor: nodeVal is volume, so cbrt(val) gives radius.
+          // Cubing compensates so the visible radius matches the 2D scaling.
+          const s = 1 + Math.sqrt(Math.max(0, node.linkCount - 1)) * 0.5;
+          return base * s * s * s;
         })
         .linkColor((link: any) => {
           const config = this.settings.linkTypes[link.type];
@@ -173,7 +176,8 @@ export class GraphRenderer3D {
       .nodeVal((node: any) => {
         const base = this.settings.nodeSize;
         if (!this.settings.scaleNodeByLinks || !node.linkCount) return base;
-        return base * (1 + Math.sqrt(Math.max(0, node.linkCount - 1)) * 0.5);
+        const s = 1 + Math.sqrt(Math.max(0, node.linkCount - 1)) * 0.5;
+        return base * s * s * s;
       });
 
     const chargeForce = this.graph.d3Force("charge");

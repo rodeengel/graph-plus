@@ -25,9 +25,9 @@
   "showNodeLabels": true,
   "showUntyped": true,
   "defaultMode": "2d",
-  "nodeSize": 13,
-  "chargeStrength": -720,
-  "centerForce": 1.75,
+  "nodeSize": 20,
+  "chargeStrength": -450,
+  "centerForce": 2,
   "linkStrength": 1.45,
   "linkDistance": 165,
   "nodeGroups": [

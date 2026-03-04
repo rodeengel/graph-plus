@@ -10,15 +10,15 @@
 /* Floating sidebar toggle */
 .glt-sidebar-toggle {
   position: absolute;
-  top: 8px;
-  left: 8px;
+  top: 6px;
+  left: 6px;
   z-index: 15;
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--background-modifier-border);
+  width: 24px;
+  height: 24px;
+  border: none;
   border-radius: 4px;
-  background: var(--background-primary);
-  color: var(--text-normal);
+  background: transparent;
+  color: var(--text-muted);
   font-size: 1.2em;
   cursor: pointer;
   display: flex;
@@ -26,10 +26,13 @@
   justify-content: center;
   line-height: 1;
   padding: 0;
+  opacity: 0.6;
+  transition: opacity 0.15s, color 0.15s;
 }
 
 .glt-sidebar-toggle:hover {
-  background: var(--background-modifier-hover);
+  opacity: 1;
+  color: var(--text-normal);
 }
 
 /* Sidebar buttons row */
