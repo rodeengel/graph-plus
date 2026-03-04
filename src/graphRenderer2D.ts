@@ -5,13 +5,12 @@ import {
   forceCenter,
   forceCollide,
   type Simulation,
-  type SimulationLinkDatum,
 } from "d3-force";
 import { select } from "d3-selection";
 import { zoom, zoomIdentity, type ZoomBehavior, type D3ZoomEvent } from "d3-zoom";
 import { drag, type D3DragEvent } from "d3-drag";
 import type { App } from "obsidian";
-import type { GraphNode, GraphLink, GraphData, GraphLinkTypesSettings } from "./types";
+import type { GraphNode, GraphLink, GraphData, GraphLinkTypesSettings, NodeGroup } from "./types";
 import { UNTYPED_LINK_KEY } from "./types";
 
 export class GraphRenderer2D {
@@ -37,10 +36,19 @@ export class GraphRenderer2D {
   private dpr = 1;
   private destroyed = false;
 
+  // Resolved CSS fallback colors
+  private resolvedTextColor: string;
+  private resolvedAccentColor: string;
+
   constructor(container: HTMLElement, app: App, settings: GraphLinkTypesSettings) {
     this.container = container;
     this.app = app;
     this.settings = settings;
+
+    // Resolve CSS variables at construction time for Canvas compatibility
+    const cs = getComputedStyle(container);
+    this.resolvedTextColor = cs.getPropertyValue("--text-normal").trim() || "#ddd";
+    this.resolvedAccentColor = cs.getPropertyValue("--interactive-accent").trim() || "#7b6cd9";
 
     // Create canvas
     this.canvas = document.createElement("canvas");
@@ -60,9 +68,13 @@ export class GraphRenderer2D {
     // Simulation
     this.simulation = forceSimulation<GraphNode>()
       .force("charge", forceManyBody().strength(settings.chargeStrength))
-      .force("center", forceCenter(this.width / 2, this.height / 2))
+      .force("center", forceCenter(this.width / 2, this.height / 2).strength(settings.centerForce))
       .force("collide", forceCollide(settings.nodeSize + 2))
       .on("tick", () => this.render());
+
+    if (!settings.animate) {
+      this.simulation.stop();
+    }
 
     // Zoom
     this.zoomBehavior = zoom<HTMLCanvasElement, unknown>()
@@ -72,10 +84,8 @@ export class GraphRenderer2D {
         this.render();
       });
 
-    const sel = select(this.canvas);
-    sel.call(this.zoomBehavior as any);
-
-    // Drag
+    // Drag — must be registered BEFORE zoom so that drag's
+    // stopImmediatePropagation prevents zoom from panning while dragging a node
     const dragBehavior = drag<HTMLCanvasElement, unknown>()
       .subject((event) => this.findNode(event.x, event.y))
       .on("start", (event: D3DragEvent<HTMLCanvasElement, unknown, GraphNode>) => {
@@ -93,7 +103,9 @@ export class GraphRenderer2D {
         event.subject.fy = null;
       });
 
+    const sel = select(this.canvas);
     sel.call(dragBehavior as any);
+    sel.call(this.zoomBehavior as any);
 
     // Mouse events for hover and click
     this.canvas.addEventListener("mousemove", this.onMouseMove);
@@ -116,6 +128,7 @@ export class GraphRenderer2D {
       source: typeof l.source === "string" ? l.source : l.source.id,
       target: typeof l.target === "string" ? l.target : l.target.id,
       type: l.type,
+      curvature: l.curvature,
     })) as GraphLink[];
 
     this.simulation.nodes(this.nodes);
@@ -124,8 +137,51 @@ export class GraphRenderer2D {
       forceLink<GraphNode, GraphLink>(this.links)
         .id((d) => d.id)
         .distance(this.settings.linkDistance)
+        .strength(this.settings.linkStrength)
     );
     this.simulation.alpha(1).restart();
+
+    if (!this.settings.animate) {
+      // Run simulation to completion synchronously then stop
+      this.simulation.stop();
+      for (let i = 0; i < 300; i++) this.simulation.tick();
+      this.render();
+    }
+  }
+
+  /** Update forces and display settings without rebuilding data */
+  updateSettings(): void {
+    const charge = this.simulation.force("charge") as any;
+    if (charge) charge.strength(this.settings.chargeStrength);
+
+    const center = this.simulation.force("center") as any;
+    if (center) center.strength(this.settings.centerForce);
+
+    const link = this.simulation.force("link") as any;
+    if (link) {
+      link.distance(this.settings.linkDistance);
+      link.strength(this.settings.linkStrength);
+    }
+
+    const collide = this.simulation.force("collide") as any;
+    if (collide) collide.radius(this.settings.nodeSize + 2);
+
+    this.simulation.alpha(0.3).restart();
+
+    if (!this.settings.animate) {
+      this.simulation.stop();
+    }
+
+    this.render();
+  }
+
+  /** Start or stop the simulation animation */
+  setAnimate(running: boolean): void {
+    if (running) {
+      this.simulation.alpha(0.3).restart();
+    } else {
+      this.simulation.stop();
+    }
   }
 
   private updateSize(): void {
@@ -140,6 +196,15 @@ export class GraphRenderer2D {
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
   }
 
+  private getNodeColor(node: GraphNode): string {
+    // Group color takes priority
+    if (node.group) {
+      const group = this.settings.nodeGroups.find((g) => g.name === node.group);
+      if (group) return group.color;
+    }
+    return this.settings.nodeColor;
+  }
+
   private render(): void {
     if (this.destroyed) return;
     const ctx = this.ctx;
@@ -152,6 +217,9 @@ export class GraphRenderer2D {
 
     const nodeSize = this.settings.nodeSize;
     const showLabels = this.settings.showLabels;
+    const showArrows = this.settings.showArrows;
+    const linkThickness = this.settings.linkThickness;
+    const textFadeThreshold = this.settings.textFadeThreshold;
     const hoveredId = this.hoveredNode?.id;
 
     // Gather connected set for hover dimming
@@ -188,26 +256,72 @@ export class GraphRenderer2D {
       }
 
       ctx.beginPath();
-      ctx.moveTo(source.x!, source.y!);
-      ctx.lineTo(target.x!, target.y!);
       ctx.strokeStyle = color;
       ctx.globalAlpha = alpha;
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.globalAlpha = 1;
+      ctx.lineWidth = linkThickness;
 
-      // Edge labels
-      if (showLabels && link.type !== UNTYPED_LINK_KEY && t.k > 0.5) {
-        const mx = (source.x! + target.x!) / 2;
-        const my = (source.y! + target.y!) / 2;
-        ctx.font = `${10 / Math.max(t.k, 0.5)}px sans-serif`;
-        ctx.fillStyle = color;
-        ctx.globalAlpha = alpha;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(link.type, mx, my - 4);
-        ctx.globalAlpha = 1;
+      const sx = source.x!;
+      const sy = source.y!;
+      const tx = target.x!;
+      const ty = target.y!;
+
+      if (link.curvature !== 0) {
+        // Curved edge: control point perpendicular to midpoint
+        const mx = (sx + tx) / 2;
+        const my = (sy + ty) / 2;
+        const dx = tx - sx;
+        const dy = ty - sy;
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        // Perpendicular offset
+        const nx = -dy / len;
+        const ny = dx / len;
+        const offset = link.curvature * len * 0.5;
+        const cpx = mx + nx * offset;
+        const cpy = my + ny * offset;
+
+        ctx.moveTo(sx, sy);
+        ctx.quadraticCurveTo(cpx, cpy, tx, ty);
+        ctx.stroke();
+
+        // Arrowhead on curved edge
+        if (showArrows) {
+          this.drawArrowhead(ctx, cpx, cpy, tx, ty, nodeSize, color, alpha);
+        }
+
+        // Edge label at curve midpoint
+        if (showLabels && link.type !== UNTYPED_LINK_KEY && t.k > 0.5) {
+          const labelX = (sx + 2 * cpx + tx) / 4;
+          const labelY = (sy + 2 * cpy + ty) / 4;
+          ctx.font = `${10 / Math.max(t.k, 0.5)}px sans-serif`;
+          ctx.fillStyle = color;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(link.type, labelX, labelY - 4);
+        }
+      } else {
+        // Straight edge
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(tx, ty);
+        ctx.stroke();
+
+        // Arrowhead on straight edge
+        if (showArrows) {
+          this.drawArrowhead(ctx, sx, sy, tx, ty, nodeSize, color, alpha);
+        }
+
+        // Edge labels
+        if (showLabels && link.type !== UNTYPED_LINK_KEY && t.k > 0.5) {
+          const lmx = (sx + tx) / 2;
+          const lmy = (sy + ty) / 2;
+          ctx.font = `${10 / Math.max(t.k, 0.5)}px sans-serif`;
+          ctx.fillStyle = color;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(link.type, lmx, lmy - 4);
+        }
       }
+
+      ctx.globalAlpha = 1;
     }
 
     // Draw nodes
@@ -220,25 +334,78 @@ export class GraphRenderer2D {
       }
 
       const isHovered = node.id === hoveredId;
+      const radius = isHovered ? nodeSize + 2 : nodeSize;
+      const fillColor = isHovered
+        ? this.settings.nodeColorHover
+        : this.getNodeColor(node);
 
-      ctx.beginPath();
-      ctx.arc(node.x, node.y, isHovered ? nodeSize + 2 : nodeSize, 0, Math.PI * 2);
-      ctx.fillStyle = isHovered ? "var(--interactive-accent, #7b6cd9)" : "var(--text-normal, #ddd)";
       ctx.globalAlpha = alpha;
-      ctx.fill();
 
-      // Node label on hover or when zoomed in
-      if ((isHovered || t.k > 2) && node.name) {
+      // Non-existent nodes: dashed stroke outline
+      if (!node.exists) {
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
+        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = fillColor;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else {
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = fillColor;
+        ctx.fill();
+      }
+
+      // Node label: on hover or when zoom exceeds text fade threshold
+      if ((isHovered || t.k > textFadeThreshold) && node.name) {
         ctx.font = `${12 / Math.max(t.k, 0.5)}px sans-serif`;
-        ctx.fillStyle = "var(--text-normal, #ddd)";
+        ctx.fillStyle = this.resolvedTextColor;
         ctx.textAlign = "center";
-        ctx.fillText(node.name, node.x, node.y - nodeSize - 4);
+        ctx.fillText(node.name, node.x, node.y - radius - 4);
       }
 
       ctx.globalAlpha = 1;
     }
 
     ctx.restore();
+  }
+
+  /** Draw a filled triangle arrowhead pointing at (tx, ty), offset by nodeSize */
+  private drawArrowhead(
+    ctx: CanvasRenderingContext2D,
+    fromX: number, fromY: number,
+    toX: number, toY: number,
+    nodeSize: number,
+    color: string,
+    alpha: number
+  ): void {
+    const dx = toX - fromX;
+    const dy = toY - fromY;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len === 0) return;
+
+    const ux = dx / len;
+    const uy = dy / len;
+
+    // Position arrowhead at the edge of the target node
+    const tipX = toX - ux * (nodeSize + 2);
+    const tipY = toY - uy * (nodeSize + 2);
+
+    const arrowLen = 8;
+    const arrowWidth = 4;
+
+    const baseX = tipX - ux * arrowLen;
+    const baseY = tipY - uy * arrowLen;
+
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(baseX - uy * arrowWidth, baseY + ux * arrowWidth);
+    ctx.lineTo(baseX + uy * arrowWidth, baseY - ux * arrowWidth);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.globalAlpha = alpha;
+    ctx.fill();
   }
 
   private findNode(mouseX: number, mouseY: number): GraphNode | null {

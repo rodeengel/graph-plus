@@ -3,12 +3,17 @@ import type { SimulationNodeDatum, SimulationLinkDatum } from "d3-force";
 export interface GraphNode extends SimulationNodeDatum {
   id: string;     // file path
   name: string;   // basename without extension
+  tags: string[];
+  isAttachment: boolean;
+  exists: boolean;
+  group?: string;
 }
 
 export interface GraphLink extends SimulationLinkDatum<GraphNode> {
   source: string | GraphNode;
   target: string | GraphNode;
   type: string;
+  curvature: number; // 0 = straight, ±offset for parallel edges
 }
 
 export interface GraphData {
@@ -21,6 +26,12 @@ export interface LinkTypeConfig {
   visible: boolean;
 }
 
+export interface NodeGroup {
+  name: string;
+  query: string;
+  color: string;
+}
+
 export interface GraphLinkTypesSettings {
   linkTypes: Record<string, LinkTypeConfig>;
   showLabels: boolean;
@@ -28,7 +39,20 @@ export interface GraphLinkTypesSettings {
   defaultMode: "2d" | "3d";
   nodeSize: number;
   chargeStrength: number;
+  centerForce: number;      // 0-1, strength of centering force
+  linkStrength: number;     // 0-1, strength of link attraction
   linkDistance: number;
+  nodeGroups: NodeGroup[];
+  showArrows: boolean;
+  showTags: boolean;
+  showAttachments: boolean;
+  existingOnly: boolean;
+  showOrphans: boolean;
+  linkThickness: number;
+  textFadeThreshold: number;
+  animate: boolean;
+  nodeColor: string;
+  nodeColorHover: string;
 }
 
 export const DEFAULT_SETTINGS: GraphLinkTypesSettings = {
@@ -38,7 +62,20 @@ export const DEFAULT_SETTINGS: GraphLinkTypesSettings = {
   defaultMode: "2d",
   nodeSize: 5,
   chargeStrength: -120,
+  centerForce: 1,
+  linkStrength: 1,
   linkDistance: 60,
+  nodeGroups: [],
+  showArrows: false,
+  showTags: true,
+  showAttachments: true,
+  existingOnly: false,
+  showOrphans: true,
+  linkThickness: 1.5,
+  textFadeThreshold: 1.0,
+  animate: true,
+  nodeColor: "#888888",
+  nodeColorHover: "#7b6cd9",
 };
 
 export const COLOR_PALETTE = [

@@ -14,7 +14,7 @@
     },
     "description": {
       "color": "#f58231",
-      "visible": true
+      "visible": false
     },
     "cover": {
       "color": "#911eb4",
@@ -22,13 +22,112 @@
     },
     "creator": {
       "color": "#42d4f4",
+      "visible": false
+    },
+    "status": {
+      "color": "#f032e6",
+      "visible": true
+    },
+    "created": {
+      "color": "#bfef45",
+      "visible": false
+    },
+    "modified": {
+      "color": "#fabed4",
+      "visible": false
+    },
+    "reviewed": {
+      "color": "#469990",
+      "visible": false
+    },
+    "review?": {
+      "color": "#dcbeff",
+      "visible": false
+    },
+    "credence": {
+      "color": "#9A6324",
+      "visible": false
+    },
+    "start date": {
+      "color": "#800000",
+      "visible": true
+    },
+    "last updated": {
+      "color": "#aaffc3",
+      "visible": false
+    },
+    "series name": {
+      "color": "#808000",
+      "visible": false
+    },
+    "publisher": {
+      "color": "#ffd8b1",
+      "visible": false
+    },
+    "release date": {
+      "color": "#000075",
+      "visible": false
+    },
+    "source": {
+      "color": "#a9a9a9",
+      "visible": true
+    },
+    "checkbox": {
+      "color": "#e6194b",
+      "visible": false
+    },
+    "date": {
+      "color": "#3cb44b",
+      "visible": false
+    },
+    "date and time": {
+      "color": "#4363d8",
+      "visible": false
+    },
+    "list": {
+      "color": "#f58231",
+      "visible": false
+    },
+    "number": {
+      "color": "#911eb4",
+      "visible": false
+    },
+    "text": {
+      "color": "#42d4f4",
+      "visible": true
+    },
+    "length": {
+      "color": "#f032e6",
+      "visible": false
+    },
+    "progress": {
+      "color": "#bfef45",
       "visible": true
     }
   },
   "showLabels": true,
   "showUntyped": true,
   "defaultMode": "2d",
-  "nodeSize": 5,
-  "chargeStrength": -120,
-  "linkDistance": 60
+  "nodeSize": 20,
+  "chargeStrength": -500,
+  "centerForce": 1,
+  "linkStrength": 0.45,
+  "linkDistance": 20,
+  "nodeGroups": [
+    {
+      "name": "",
+      "query": "AI",
+      "color": "#4363d8"
+    }
+  ],
+  "showArrows": true,
+  "showTags": false,
+  "showAttachments": true,
+  "existingOnly": true,
+  "showOrphans": true,
+  "linkThickness": 0.5,
+  "textFadeThreshold": 5,
+  "animate": true,
+  "nodeColor": "#888888",
+  "nodeColorHover": "#7b6cd9"
 }

@@ -12,8 +12,11 @@ interface ForceGraph3DInstance {
   nodeVal(fn: (node: any) => number): ForceGraph3DInstance;
   linkColor(fn: (link: any) => string): ForceGraph3DInstance;
   linkLabel(fn: (link: any) => string): ForceGraph3DInstance;
-  linkWidth(w: number): ForceGraph3DInstance;
+  linkWidth(w: number | ((link: any) => number)): ForceGraph3DInstance;
+  linkCurvature(v: number | string | ((link: any) => number)): ForceGraph3DInstance;
   linkDirectionalParticles(n: number): ForceGraph3DInstance;
+  linkDirectionalArrowLength(n: number | ((link: any) => number)): ForceGraph3DInstance;
+  linkDirectionalArrowRelPos(n: number): ForceGraph3DInstance;
   onNodeClick(fn: (node: any) => void): ForceGraph3DInstance;
   onNodeRightClick(fn: (node: any) => void): ForceGraph3DInstance;
   d3Force(name: string, force?: any): any;
@@ -30,6 +33,7 @@ export class GraphRenderer3D {
   private settings: GraphLinkTypesSettings;
   private resizeObserver: ResizeObserver;
   private destroyed = false;
+  private pendingData: GraphData | null = null;
 
   constructor(container: HTMLElement, app: App, settings: GraphLinkTypesSettings) {
     this.container = container;
@@ -63,7 +67,14 @@ export class GraphRenderer3D {
         .width(rect.width)
         .height(rect.height)
         .backgroundColor("rgba(0,0,0,0)")
-        .nodeColor(() => "#cccccc")
+        .nodeColor((node: any) => {
+          // Group color takes priority
+          if (node.group) {
+            const group = this.settings.nodeGroups.find((g: any) => g.name === node.group);
+            if (group) return group.color;
+          }
+          return this.settings.nodeColor;
+        })
         .nodeLabel((node: any) => node.name)
         .nodeVal(() => this.settings.nodeSize)
         .linkColor((link: any) => {
@@ -74,7 +85,10 @@ export class GraphRenderer3D {
           if (link.type === UNTYPED_LINK_KEY) return "";
           return link.type;
         })
-        .linkWidth(1.5)
+        .linkWidth(this.settings.linkThickness)
+        .linkCurvature((link: any) => link.curvature ?? 0)
+        .linkDirectionalArrowLength(this.settings.showArrows ? 6 : 0)
+        .linkDirectionalArrowRelPos(1)
         .onNodeClick((node: any) => {
           this.app.workspace.openLinkText(node.id, "", false);
         })
@@ -85,8 +99,19 @@ export class GraphRenderer3D {
       // Configure forces
       const chargeForce = this.graph.d3Force("charge");
       if (chargeForce) chargeForce.strength(this.settings.chargeStrength);
+      const centerForce = this.graph.d3Force("center");
+      if (centerForce) centerForce.strength(this.settings.centerForce);
       const linkForce = this.graph.d3Force("link");
-      if (linkForce) linkForce.distance(this.settings.linkDistance);
+      if (linkForce) {
+        linkForce.distance(this.settings.linkDistance);
+        linkForce.strength(this.settings.linkStrength);
+      }
+
+      // Apply pending data if updateData was called before graph was ready
+      if (this.pendingData) {
+        this.applyData(this.pendingData);
+        this.pendingData = null;
+      }
     } catch (err) {
       console.error("Graph Link Types: Failed to initialize 3D renderer", err);
       this.wrapper.textContent = "3D rendering unavailable. Check console for errors.";
@@ -94,17 +119,34 @@ export class GraphRenderer3D {
   }
 
   updateData(data: GraphData): void {
-    if (!this.graph || this.destroyed) return;
+    if (this.destroyed) return;
+
+    if (!this.graph) {
+      // Graph not initialized yet, store data for later
+      this.pendingData = data;
+      return;
+    }
+
+    this.applyData(data);
+  }
+
+  private applyData(data: GraphData): void {
+    if (!this.graph) return;
 
     const nodes = data.nodes.map((n) => ({
       id: n.id,
       name: n.name,
+      group: n.group,
+      exists: n.exists,
+      tags: n.tags,
+      isAttachment: n.isAttachment,
     }));
 
     const links = data.links.map((l) => ({
       source: typeof l.source === "string" ? l.source : l.source.id,
       target: typeof l.target === "string" ? l.target : l.target.id,
       type: l.type,
+      curvature: l.curvature,
     }));
 
     this.graph.graphData({ nodes, links });

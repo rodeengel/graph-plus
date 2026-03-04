@@ -1,5 +1,5 @@
-import { ItemView, WorkspaceLeaf, Setting } from "obsidian";
-import type { GraphLinkTypesSettings, GraphData, LinkTypeConfig } from "./types";
+import { ItemView, WorkspaceLeaf } from "obsidian";
+import type { GraphLinkTypesSettings, GraphData, NodeGroup } from "./types";
 import { UNTYPED_LINK_KEY } from "./types";
 import { buildGraphData, filterGraphData, countLinkTypes } from "./linkParser";
 import { GraphRenderer2D } from "./graphRenderer2D";
@@ -17,6 +17,7 @@ export class GraphLinkTypesView extends ItemView {
   private filterPanelEl: HTMLElement | null = null;
   private canvasContainerEl: HTMLElement | null = null;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private searchQuery: string = "";
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -103,14 +104,74 @@ export class GraphLinkTypesView extends ItemView {
     this.pushDataToRenderer();
   }
 
+  // --- Collapsible section helper ---
+  private createCollapsibleSection(
+    parent: HTMLElement,
+    title: string,
+    defaultOpen: boolean = true
+  ): HTMLElement {
+    const section = parent.createDiv({ cls: "glt-filter-section" });
+
+    const header = section.createDiv({ cls: "glt-collapsible-header" });
+    const chevron = header.createSpan({ cls: "glt-chevron", text: defaultOpen ? "▾" : "▸" });
+    header.createSpan({ text: " " + title });
+
+    const content = section.createDiv({ cls: "glt-collapsible-content" });
+    if (!defaultOpen) {
+      content.style.display = "none";
+    }
+
+    header.addEventListener("click", () => {
+      const isOpen = content.style.display !== "none";
+      content.style.display = isOpen ? "none" : "";
+      chevron.textContent = isOpen ? "▸" : "▾";
+    });
+
+    return content;
+  }
+
   private buildFilterPanel(): void {
     const panel = this.filterPanelEl;
     if (!panel) return;
     panel.empty();
 
-    // Link types section
-    const section = panel.createDiv({ cls: "glt-filter-section" });
-    section.createEl("h4", { text: "Link Types" });
+    // --- Search box ---
+    const searchInput = panel.createEl("input", {
+      type: "text",
+      placeholder: "Search nodes...",
+      cls: "glt-search-input",
+    });
+    searchInput.value = this.searchQuery;
+    searchInput.addEventListener("input", () => {
+      this.searchQuery = searchInput.value;
+      this.pushDataToRenderer();
+    });
+
+    // --- Filters (collapsible) ---
+    const filtersContent = this.createCollapsibleSection(panel, "Filters", true);
+    this.buildToggle(filtersContent, "Tags", this.settings.showTags, async (val) => {
+      this.settings.showTags = val;
+      await this.saveSettings();
+      this.pushDataToRenderer();
+    });
+    this.buildToggle(filtersContent, "Attachments", this.settings.showAttachments, async (val) => {
+      this.settings.showAttachments = val;
+      await this.saveSettings();
+      this.pushDataToRenderer();
+    });
+    this.buildToggle(filtersContent, "Existing only", this.settings.existingOnly, async (val) => {
+      this.settings.existingOnly = val;
+      await this.saveSettings();
+      this.pushDataToRenderer();
+    });
+    this.buildToggle(filtersContent, "Orphans", this.settings.showOrphans, async (val) => {
+      this.settings.showOrphans = val;
+      await this.saveSettings();
+      this.pushDataToRenderer();
+    });
+
+    // --- Link Types (collapsible) ---
+    const linkTypesContent = this.createCollapsibleSection(panel, "Link Types", true);
 
     const counts = countLinkTypes(this.fullData);
 
@@ -126,7 +187,7 @@ export class GraphLinkTypesView extends ItemView {
       const count = counts.get(type) ?? 0;
       const displayName = type === UNTYPED_LINK_KEY ? "untyped" : type;
 
-      const row = section.createDiv({ cls: "glt-filter-item" });
+      const row = linkTypesContent.createDiv({ cls: "glt-filter-item" });
 
       // Visibility checkbox
       const checkbox = row.createEl("input", { type: "checkbox" });
@@ -162,19 +223,179 @@ export class GraphLinkTypesView extends ItemView {
       row.createEl("span", { text: `(${count})`, cls: "glt-link-count" });
     }
 
-    // Toggles section
-    const toggleSection = panel.createDiv({ cls: "glt-filter-section" });
-    toggleSection.createEl("h4", { text: "Display" });
+    // --- Display (collapsible) ---
+    const displayContent = this.createCollapsibleSection(panel, "Display", false);
 
-    const labelRow = toggleSection.createDiv({ cls: "glt-toggle-row" });
-    labelRow.createEl("span", { text: "Show labels" });
-    const labelToggle = labelRow.createEl("input", { type: "checkbox" });
-    labelToggle.checked = this.settings.showLabels;
-    labelToggle.addEventListener("change", async () => {
-      this.settings.showLabels = labelToggle.checked;
+    this.buildToggle(displayContent, "Labels", this.settings.showLabels, async (val) => {
+      this.settings.showLabels = val;
       await this.saveSettings();
-      this.pushDataToRenderer();
+      if (this.renderer2D) this.renderer2D.updateSettings();
+      else this.pushDataToRenderer();
     });
+
+    this.buildToggle(displayContent, "Arrows", this.settings.showArrows, async (val) => {
+      this.settings.showArrows = val;
+      await this.saveSettings();
+      if (this.renderer2D) this.renderer2D.updateSettings();
+      else this.pushDataToRenderer();
+    });
+
+    this.buildSlider(displayContent, "Text fade", this.settings.textFadeThreshold, 0.1, 5, 0.1, async (val) => {
+      this.settings.textFadeThreshold = val;
+      await this.saveSettings();
+      if (this.renderer2D) this.renderer2D.updateSettings();
+    });
+
+    this.buildSlider(displayContent, "Node size", this.settings.nodeSize, 1, 20, 1, async (val) => {
+      this.settings.nodeSize = val;
+      await this.saveSettings();
+      if (this.renderer2D) this.renderer2D.updateSettings();
+      else this.pushDataToRenderer();
+    });
+
+    this.buildSlider(displayContent, "Link thickness", this.settings.linkThickness, 0.5, 5, 0.5, async (val) => {
+      this.settings.linkThickness = val;
+      await this.saveSettings();
+      if (this.renderer2D) this.renderer2D.updateSettings();
+      else this.pushDataToRenderer();
+    });
+
+    // --- Forces (collapsible) ---
+    const forcesContent = this.createCollapsibleSection(panel, "Forces", false);
+
+    this.buildSlider(forcesContent, "Center force", this.settings.centerForce, 0, 1, 0.05, async (val) => {
+      this.settings.centerForce = val;
+      await this.saveSettings();
+      if (this.renderer2D) this.renderer2D.updateSettings();
+    });
+
+    this.buildSlider(forcesContent, "Repel force", this.settings.chargeStrength, -500, -10, 10, async (val) => {
+      this.settings.chargeStrength = val;
+      await this.saveSettings();
+      if (this.renderer2D) this.renderer2D.updateSettings();
+    });
+
+    this.buildSlider(forcesContent, "Link force", this.settings.linkStrength, 0, 1, 0.05, async (val) => {
+      this.settings.linkStrength = val;
+      await this.saveSettings();
+      if (this.renderer2D) this.renderer2D.updateSettings();
+    });
+
+    this.buildSlider(forcesContent, "Link distance", this.settings.linkDistance, 20, 200, 5, async (val) => {
+      this.settings.linkDistance = val;
+      await this.saveSettings();
+      if (this.renderer2D) this.renderer2D.updateSettings();
+    });
+
+    this.buildToggle(forcesContent, "Pause physics", !this.settings.animate, async (val) => {
+      this.settings.animate = !val;
+      await this.saveSettings();
+      if (this.renderer2D) this.renderer2D.setAnimate(!val);
+    });
+
+    // --- Groups (collapsible) ---
+    const groupsContent = this.createCollapsibleSection(panel, "Groups", false);
+    this.buildGroupEditor(groupsContent);
+  }
+
+  private buildToggle(
+    parent: HTMLElement,
+    label: string,
+    value: boolean,
+    onChange: (val: boolean) => Promise<void>
+  ): void {
+    const row = parent.createDiv({ cls: "glt-toggle-row" });
+    row.createEl("span", { text: label });
+    const toggle = row.createEl("input", { type: "checkbox" });
+    toggle.checked = value;
+    toggle.addEventListener("change", () => onChange(toggle.checked));
+  }
+
+  private buildSlider(
+    parent: HTMLElement,
+    label: string,
+    value: number,
+    min: number,
+    max: number,
+    step: number,
+    onChange: (val: number) => Promise<void>
+  ): void {
+    const row = parent.createDiv({ cls: "glt-slider-row" });
+    row.createEl("span", { text: label });
+
+    const controls = row.createDiv({ cls: "glt-slider-controls" });
+    const slider = controls.createEl("input", { type: "range" });
+    slider.min = String(min);
+    slider.max = String(max);
+    slider.step = String(step);
+    slider.value = String(value);
+
+    const valueDisplay = controls.createEl("span", {
+      text: String(value),
+      cls: "glt-slider-value",
+    });
+
+    slider.addEventListener("input", () => {
+      const v = parseFloat(slider.value);
+      valueDisplay.textContent = String(v);
+      onChange(v);
+    });
+  }
+
+  private buildGroupEditor(parent: HTMLElement): void {
+    const groups = this.settings.nodeGroups;
+
+    const renderGroups = () => {
+      parent.empty();
+
+      for (let i = 0; i < groups.length; i++) {
+        const group = groups[i];
+        const row = parent.createDiv({ cls: "glt-group-row" });
+
+        const nameInput = row.createEl("input", { type: "text", placeholder: "Name" });
+        nameInput.value = group.name;
+        nameInput.className = "glt-group-name-input";
+        nameInput.addEventListener("change", async () => {
+          group.name = nameInput.value;
+          await this.saveSettings();
+          await this.rebuildGraph();
+        });
+
+        const queryInput = row.createEl("input", { type: "text", placeholder: "Query (path:, tag:#, file:)" });
+        queryInput.value = group.query;
+        queryInput.className = "glt-group-query-input";
+        queryInput.addEventListener("change", async () => {
+          group.query = queryInput.value;
+          await this.saveSettings();
+          await this.rebuildGraph();
+        });
+
+        const colorInput = row.createEl("input", { type: "color", cls: "glt-color-swatch" });
+        colorInput.value = group.color;
+        colorInput.addEventListener("input", async () => {
+          group.color = colorInput.value;
+          await this.saveSettings();
+          await this.rebuildGraph();
+        });
+
+        const deleteBtn = row.createEl("button", { text: "×", cls: "glt-group-delete-btn" });
+        deleteBtn.addEventListener("click", async () => {
+          groups.splice(i, 1);
+          await this.saveSettings();
+          renderGroups();
+          await this.rebuildGraph();
+        });
+      }
+
+      const addBtn = parent.createEl("button", { text: "+ Add group", cls: "glt-group-add-btn" });
+      addBtn.addEventListener("click", async () => {
+        groups.push({ name: "", query: "", color: "#4363d8" });
+        await this.saveSettings();
+        renderGroups();
+      });
+    };
+
+    renderGroups();
   }
 
   private initRenderer(): void {
@@ -197,7 +418,7 @@ export class GraphLinkTypesView extends ItemView {
   }
 
   private pushDataToRenderer(): void {
-    const filtered = filterGraphData(this.fullData, this.settings);
+    const filtered = filterGraphData(this.fullData, this.settings, this.searchQuery);
     if (this.renderer2D) {
       this.renderer2D.updateData(filtered);
     }
