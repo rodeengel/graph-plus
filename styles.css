@@ -1,0 +1,146 @@
+/* Graph Link Types plugin styles */
+
+.glt-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.glt-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex-shrink: 0;
+}
+
+.glt-toolbar button {
+  cursor: pointer;
+}
+
+.glt-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Filter panel */
+.glt-filter-panel {
+  width: 220px;
+  min-width: 180px;
+  border-right: 1px solid var(--background-modifier-border);
+  overflow-y: auto;
+  padding: 8px;
+  flex-shrink: 0;
+}
+
+.glt-filter-panel h4 {
+  margin: 0 0 8px 0;
+  font-size: 0.85em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.glt-filter-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 0.9em;
+}
+
+.glt-filter-item label {
+  flex: 1;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.glt-color-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid var(--background-modifier-border);
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.glt-link-count {
+  color: var(--text-muted);
+  font-size: 0.8em;
+  flex-shrink: 0;
+}
+
+.glt-filter-section {
+  margin-bottom: 12px;
+}
+
+.glt-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+/* Canvas container */
+.glt-canvas-container {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.glt-canvas-container canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* 3D container */
+.glt-3d-container {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Node tooltip */
+.glt-tooltip {
+  position: absolute;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 0.85em;
+  pointer-events: none;
+  z-index: 10;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* Context menu */
+.glt-context-menu {
+  position: absolute;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 4px 0;
+  z-index: 20;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  min-width: 150px;
+}
+
+.glt-context-menu-item {
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.glt-context-menu-item:hover {
+  background: var(--background-modifier-hover);
+}

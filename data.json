@@ -1,0 +1,34 @@
+{
+  "linkTypes": {
+    "title": {
+      "color": "#e6194b",
+      "visible": true
+    },
+    "type": {
+      "color": "#3cb44b",
+      "visible": true
+    },
+    "__untyped__": {
+      "color": "#4363d8",
+      "visible": true
+    },
+    "description": {
+      "color": "#f58231",
+      "visible": true
+    },
+    "cover": {
+      "color": "#911eb4",
+      "visible": true
+    },
+    "creator": {
+      "color": "#42d4f4",
+      "visible": true
+    }
+  },
+  "showLabels": true,
+  "showUntyped": true,
+  "defaultMode": "2d",
+  "nodeSize": 5,
+  "chargeStrength": -120,
+  "linkDistance": 60
+}

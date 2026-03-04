@@ -1,0 +1,9 @@
+{
+  "id": "graph-link-types",
+  "name": "Graph Link Types",
+  "version": "0.1.0",
+  "minAppVersion": "1.0.0",
+  "description": "Custom force-directed graph view with typed, colored links parsed from Dataview-style inline fields and frontmatter.",
+  "author": "Nicolas",
+  "isDesktopOnly": false
+}
