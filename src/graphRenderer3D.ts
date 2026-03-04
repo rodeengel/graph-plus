@@ -1,6 +1,9 @@
 import type { App } from "obsidian";
 import type { GraphNode, GraphLink, GraphData, GraphLinkTypesSettings } from "./types";
 import { UNTYPED_LINK_KEY } from "./types";
+import { forceX, forceY } from "d3-force";
+// @ts-ignore — d3-force-3d is a transitive dep of 3d-force-graph
+import { forceZ } from "d3-force-3d";
 
 interface ForceGraph3DInstance {
   graphData(data: { nodes: any[]; links: any[] }): ForceGraph3DInstance;
@@ -107,11 +110,17 @@ export class GraphRenderer3D {
           this.app.workspace.openLinkText(node.id, "", "tab");
         });
 
-      // Configure forces
+      // Configure forces — use forceX/Y/Z instead of forceCenter
+      // (forceCenter only shifts center of mass, doesn't pull orphans back)
       const chargeForce = this.graph.d3Force("charge");
       if (chargeForce) chargeForce.strength(this.settings.chargeStrength);
-      const centerForce = this.graph.d3Force("center");
-      if (centerForce) centerForce.strength(this.settings.centerForce);
+
+      const centerStr = this.settings.centerForce * 0.1;
+      this.graph.d3Force("center", null);
+      this.graph.d3Force("x", forceX(0).strength(centerStr));
+      this.graph.d3Force("y", forceY(0).strength(centerStr));
+      this.graph.d3Force("z", forceZ(0).strength(centerStr));
+
       const linkForce = this.graph.d3Force("link");
       if (linkForce) {
         linkForce.distance(this.settings.linkDistance);
@@ -163,7 +172,7 @@ export class GraphRenderer3D {
     this.graph.graphData({ nodes, links });
   }
 
-  /** Update forces and display settings without rebuilding data */
+  /** Update visual display settings without reheating physics */
   updateSettings(): void {
     if (!this.graph) return;
 
@@ -179,11 +188,23 @@ export class GraphRenderer3D {
         const s = 1 + Math.sqrt(Math.max(0, node.linkCount - 1)) * 0.5;
         return base * s * s * s;
       });
+  }
+
+  /** Update force parameters and reheat the simulation */
+  updateForces(): void {
+    if (!this.graph) return;
 
     const chargeForce = this.graph.d3Force("charge");
     if (chargeForce) chargeForce.strength(this.settings.chargeStrength);
-    const centerForce = this.graph.d3Force("center");
-    if (centerForce) centerForce.strength(this.settings.centerForce);
+
+    const centerStr = this.settings.centerForce * 0.1;
+    const xForce = this.graph.d3Force("x");
+    if (xForce) xForce.strength(centerStr);
+    const yForce = this.graph.d3Force("y");
+    if (yForce) yForce.strength(centerStr);
+    const zForce = this.graph.d3Force("z");
+    if (zForce) zForce.strength(centerStr);
+
     const linkForce = this.graph.d3Force("link");
     if (linkForce) {
       linkForce.distance(this.settings.linkDistance);

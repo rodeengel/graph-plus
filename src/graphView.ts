@@ -323,7 +323,7 @@ export class GraphLinkTypesView extends ItemView {
       this.settings.centerForce = val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
-      if (this.renderer3D) this.renderer3D.updateSettings();
+      if (this.renderer3D) this.renderer3D.updateForces();
     });
 
     // Repel force: display as positive, store as negative internally
@@ -331,28 +331,28 @@ export class GraphLinkTypesView extends ItemView {
       this.settings.chargeStrength = -val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
-      if (this.renderer3D) this.renderer3D.updateSettings();
+      if (this.renderer3D) this.renderer3D.updateForces();
     });
 
     this.buildSlider(forcesContent, "Link force", this.settings.linkStrength, 0, 2, 0.05, async (val) => {
       this.settings.linkStrength = val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
-      if (this.renderer3D) this.renderer3D.updateSettings();
+      if (this.renderer3D) this.renderer3D.updateForces();
     });
 
     this.buildSlider(forcesContent, "Link distance", this.settings.linkDistance, 5, 500, 5, async (val) => {
       this.settings.linkDistance = val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
-      if (this.renderer3D) this.renderer3D.updateSettings();
+      if (this.renderer3D) this.renderer3D.updateForces();
     });
 
     this.buildSlider(forcesContent, "Collision", this.settings.collisionForce, 0, 1, 0.05, async (val) => {
       this.settings.collisionForce = val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
-      if (this.renderer3D) this.renderer3D.updateSettings();
+      if (this.renderer3D) this.renderer3D.updateForces();
     });
 
     this.buildToggle(forcesContent, "Pause physics", !this.settings.animate, async (val) => {
