@@ -18,6 +18,8 @@ export class GraphLinkTypesView extends ItemView {
   private canvasContainerEl: HTMLElement | null = null;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private searchQuery: string = "";
+  private sidebarVisible: boolean = true;
+  private modeBtnEl: HTMLElement | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -47,27 +49,23 @@ export class GraphLinkTypesView extends ItemView {
     container.empty();
     container.addClass("glt-container");
 
-    // Toolbar
-    const toolbar = container.createDiv({ cls: "glt-toolbar" });
-
-    const refreshBtn = toolbar.createEl("button", { text: "Refresh" });
-    refreshBtn.addEventListener("click", () => this.rebuildGraph());
-
-    const modeBtn = toolbar.createEl("button", {
-      text: this.currentMode === "2d" ? "Switch to 3D" : "Switch to 2D",
-    });
-    modeBtn.addEventListener("click", () => {
-      this.currentMode = this.currentMode === "2d" ? "3d" : "2d";
-      modeBtn.textContent = this.currentMode === "2d" ? "Switch to 3D" : "Switch to 2D";
-      this.destroyRenderer();
-      this.initRenderer();
-      this.pushDataToRenderer();
-    });
-
-    // Body
+    // Body (no toolbar — buttons are in sidebar)
     const body = container.createDiv({ cls: "glt-body" });
     this.filterPanelEl = body.createDiv({ cls: "glt-filter-panel" });
     this.canvasContainerEl = body.createDiv({ cls: "glt-canvas-container" });
+
+    // Floating sidebar toggle button
+    const toggleBtn = this.canvasContainerEl.createEl("button", {
+      text: "\u2261",
+      cls: "glt-sidebar-toggle",
+      attr: { "aria-label": "Toggle sidebar" },
+    });
+    toggleBtn.addEventListener("click", () => {
+      this.sidebarVisible = !this.sidebarVisible;
+      if (this.filterPanelEl) {
+        this.filterPanelEl.style.display = this.sidebarVisible ? "" : "none";
+      }
+    });
 
     // Build and render
     await this.rebuildGraph();
@@ -134,6 +132,31 @@ export class GraphLinkTypesView extends ItemView {
     const panel = this.filterPanelEl;
     if (!panel) return;
     panel.empty();
+
+    // --- Sidebar buttons row ---
+    const btnRow = panel.createDiv({ cls: "glt-sidebar-buttons" });
+
+    const refreshBtn = btnRow.createEl("button", { text: "Refresh", cls: "glt-sidebar-btn" });
+    refreshBtn.addEventListener("click", () => this.rebuildGraph());
+
+    const modeBtn = btnRow.createEl("button", {
+      text: this.currentMode === "2d" ? "3D" : "2D",
+      cls: "glt-sidebar-btn",
+    });
+    this.modeBtnEl = modeBtn;
+    modeBtn.addEventListener("click", () => {
+      this.currentMode = this.currentMode === "2d" ? "3d" : "2d";
+      modeBtn.textContent = this.currentMode === "2d" ? "3D" : "2D";
+      this.destroyRenderer();
+      this.initRenderer();
+      this.pushDataToRenderer();
+    });
+
+    const homeBtn = btnRow.createEl("button", { text: "Home", cls: "glt-sidebar-btn" });
+    homeBtn.addEventListener("click", () => {
+      if (this.renderer2D) this.renderer2D.resetView();
+      if (this.renderer3D) this.renderer3D.resetCamera();
+    });
 
     // --- Search box (supports Obsidian query syntax) ---
     const searchInput = panel.createEl("input", {
@@ -220,28 +243,28 @@ export class GraphLinkTypesView extends ItemView {
       this.settings.showLabels = val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
-      else this.pushDataToRenderer();
+      if (this.renderer3D) this.renderer3D.updateSettings();
     });
 
     this.buildToggle(displayContent, "Node labels", this.settings.showNodeLabels, async (val) => {
       this.settings.showNodeLabels = val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
-      else this.pushDataToRenderer();
+      if (this.renderer3D) this.renderer3D.updateSettings();
     });
 
     this.buildToggle(displayContent, "Arrows", this.settings.showArrows, async (val) => {
       this.settings.showArrows = val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
-      else this.pushDataToRenderer();
+      if (this.renderer3D) this.renderer3D.updateSettings();
     });
 
     this.buildToggle(displayContent, "Scale by connections", this.settings.scaleNodeByLinks, async (val) => {
       this.settings.scaleNodeByLinks = val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
-      else this.pushDataToRenderer();
+      if (this.renderer3D) this.renderer3D.updateSettings();
     });
 
     this.buildSlider(displayContent, "Node label zoom", this.settings.textFadeThreshold, 0.1, 5, 0.1, async (val) => {
@@ -260,14 +283,21 @@ export class GraphLinkTypesView extends ItemView {
       this.settings.nodeSize = val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
-      else this.pushDataToRenderer();
+      if (this.renderer3D) this.renderer3D.updateSettings();
     });
 
     this.buildSlider(displayContent, "Link thickness", this.settings.linkThickness, 0.5, 5, 0.5, async (val) => {
       this.settings.linkThickness = val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
-      else this.pushDataToRenderer();
+      if (this.renderer3D) this.renderer3D.updateSettings();
+    });
+
+    this.buildSlider(displayContent, "Link opacity", this.settings.linkOpacity, 0, 1, 0.05, async (val) => {
+      this.settings.linkOpacity = val;
+      await this.saveSettings();
+      if (this.renderer2D) this.renderer2D.updateSettings();
+      if (this.renderer3D) this.renderer3D.updateSettings();
     });
 
     // --- Forces (collapsible) ---
@@ -277,6 +307,7 @@ export class GraphLinkTypesView extends ItemView {
       this.settings.centerForce = val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
+      if (this.renderer3D) this.renderer3D.updateSettings();
     });
 
     // Repel force: display as positive, store as negative internally
@@ -284,24 +315,28 @@ export class GraphLinkTypesView extends ItemView {
       this.settings.chargeStrength = -val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
+      if (this.renderer3D) this.renderer3D.updateSettings();
     });
 
     this.buildSlider(forcesContent, "Link force", this.settings.linkStrength, 0, 2, 0.05, async (val) => {
       this.settings.linkStrength = val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
+      if (this.renderer3D) this.renderer3D.updateSettings();
     });
 
     this.buildSlider(forcesContent, "Link distance", this.settings.linkDistance, 5, 500, 5, async (val) => {
       this.settings.linkDistance = val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
+      if (this.renderer3D) this.renderer3D.updateSettings();
     });
 
     this.buildSlider(forcesContent, "Collision", this.settings.collisionForce, 0, 1, 0.05, async (val) => {
       this.settings.collisionForce = val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
+      if (this.renderer3D) this.renderer3D.updateSettings();
     });
 
     this.buildToggle(forcesContent, "Pause physics", !this.settings.animate, async (val) => {

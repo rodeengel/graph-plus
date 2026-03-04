@@ -17,9 +17,12 @@ interface ForceGraph3DInstance {
   linkDirectionalParticles(n: number): ForceGraph3DInstance;
   linkDirectionalArrowLength(n: number | ((link: any) => number)): ForceGraph3DInstance;
   linkDirectionalArrowRelPos(n: number): ForceGraph3DInstance;
+  linkOpacity(n: number): ForceGraph3DInstance;
   onNodeClick(fn: (node: any) => void): ForceGraph3DInstance;
   onNodeRightClick(fn: (node: any) => void): ForceGraph3DInstance;
   d3Force(name: string, force?: any): any;
+  d3ReheatSimulation(): ForceGraph3DInstance;
+  zoomToFit(ms?: number, padding?: number): ForceGraph3DInstance;
   _destructor?(): void;
   pauseAnimation?(): void;
   resumeAnimation?(): void;
@@ -89,6 +92,7 @@ export class GraphRenderer3D {
         .linkCurvature((link: any) => link.curvature ?? 0)
         .linkDirectionalArrowLength(this.settings.showArrows ? 6 * (this.settings.linkThickness / 1.5) : 0)
         .linkDirectionalArrowRelPos(1)
+        .linkOpacity(this.settings.linkOpacity)
         .onNodeClick((node: any) => {
           this.app.workspace.openLinkText(node.id, "", false);
         })
@@ -150,6 +154,39 @@ export class GraphRenderer3D {
     }));
 
     this.graph.graphData({ nodes, links });
+  }
+
+  /** Update forces and display settings without rebuilding data */
+  updateSettings(): void {
+    if (!this.graph) return;
+
+    this.graph
+      .linkWidth(this.settings.linkThickness)
+      .linkDirectionalArrowLength(this.settings.showArrows ? 6 * (this.settings.linkThickness / 1.5) : 0)
+      .linkOpacity(this.settings.linkOpacity)
+      .nodeVal((node: any) => {
+        const base = this.settings.nodeSize;
+        if (!this.settings.scaleNodeByLinks || !node.linkCount) return base;
+        return base * (1 + Math.sqrt(Math.max(0, node.linkCount - 1)) * 0.5);
+      });
+
+    const chargeForce = this.graph.d3Force("charge");
+    if (chargeForce) chargeForce.strength(this.settings.chargeStrength);
+    const centerForce = this.graph.d3Force("center");
+    if (centerForce) centerForce.strength(this.settings.centerForce);
+    const linkForce = this.graph.d3Force("link");
+    if (linkForce) {
+      linkForce.distance(this.settings.linkDistance);
+      linkForce.strength(this.settings.linkStrength);
+    }
+
+    this.graph.d3ReheatSimulation();
+  }
+
+  /** Reset camera to fit all nodes */
+  resetCamera(): void {
+    if (!this.graph) return;
+    this.graph.zoomToFit(400);
   }
 
   destroy(): void {

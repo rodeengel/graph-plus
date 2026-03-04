@@ -50,6 +50,7 @@ export interface GraphLinkTypesSettings {
   existingOnly: boolean;
   showOrphans: boolean;
   linkThickness: number;
+  linkOpacity: number;       // 0-1, opacity of links (mainly for 3D)
   textFadeThreshold: number;
   edgeLabelThreshold: number;
   collisionForce: number;
@@ -76,6 +77,7 @@ export const DEFAULT_SETTINGS: GraphLinkTypesSettings = {
   existingOnly: false,
   showOrphans: true,
   linkThickness: 1.5,
+  linkOpacity: 1.0,
   textFadeThreshold: 1.0,
   edgeLabelThreshold: 0.5,
   collisionForce: 0.7,

@@ -185,6 +185,42 @@ export class GraphRenderer2D {
     this.render();
   }
 
+  /** Reset view to fit all nodes */
+  resetView(): void {
+    if (this.nodes.length === 0) return;
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const node of this.nodes) {
+      if (node.x == null || node.y == null) continue;
+      const r = this.getNodeRadius(node);
+      if (node.x - r < minX) minX = node.x - r;
+      if (node.y - r < minY) minY = node.y - r;
+      if (node.x + r > maxX) maxX = node.x + r;
+      if (node.y + r > maxY) maxY = node.y + r;
+    }
+
+    if (!isFinite(minX)) return;
+
+    const padding = 40;
+    const bw = maxX - minX || 1;
+    const bh = maxY - minY || 1;
+    const scale = Math.min(
+      (this.width - padding * 2) / bw,
+      (this.height - padding * 2) / bh,
+      8 // max zoom
+    );
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const tx = this.width / 2 - cx * scale;
+    const ty = this.height / 2 - cy * scale;
+
+    const newTransform = zoomIdentity.translate(tx, ty).scale(scale);
+    select(this.canvas)
+      .transition()
+      .duration(400)
+      .call(this.zoomBehavior.transform as any, newTransform);
+  }
+
   /** Start or stop the simulation */
   setAnimate(running: boolean): void {
     if (running) {

@@ -138,6 +138,20 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Link opacity")
+      .setDesc("Opacity of graph edges (0 - 1)")
+      .addSlider((slider) =>
+        slider
+          .setLimits(0, 1, 0.05)
+          .setValue(this.plugin.settings.linkOpacity)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            this.plugin.settings.linkOpacity = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
       .setName("Node color")
       .setDesc("Default color for graph nodes")
       .addColorPicker((picker) =>

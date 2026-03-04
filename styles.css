@@ -7,17 +7,52 @@
   overflow: hidden;
 }
 
-.glt-toolbar {
+/* Floating sidebar toggle */
+.glt-sidebar-toggle {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 15;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 1.2em;
+  cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--background-modifier-border);
-  flex-shrink: 0;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
 }
 
-.glt-toolbar button {
+.glt-sidebar-toggle:hover {
+  background: var(--background-modifier-hover);
+}
+
+/* Sidebar buttons row */
+.glt-sidebar-buttons {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.glt-sidebar-btn {
+  flex: 1;
   cursor: pointer;
+  padding: 4px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 0.85em;
+  text-align: center;
+}
+
+.glt-sidebar-btn:hover {
+  background: var(--background-modifier-hover);
 }
 
 .glt-body {

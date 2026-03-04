@@ -14,10 +14,10 @@
     },
     "test": {
       "color": "#fabed4",
-      "visible": true
+      "visible": false
     },
     "poop": {
-      "color": "#469990",
+      "color": "#aeff00",
       "visible": true
     }
   },
@@ -25,22 +25,27 @@
   "showNodeLabels": true,
   "showUntyped": true,
   "defaultMode": "2d",
-  "nodeSize": 2,
-  "chargeStrength": -680,
-  "centerForce": 1.6,
-  "linkStrength": 2,
-  "linkDistance": 5,
+  "nodeSize": 20,
+  "chargeStrength": -720,
+  "centerForce": 1.75,
+  "linkStrength": 1.45,
+  "linkDistance": 165,
   "nodeGroups": [
     {
       "query": "path:Reference/",
       "color": "#41d87b"
+    },
+    {
+      "query": "path: Rough Notes/",
+      "color": "#4363d8"
     }
   ],
   "showArrows": true,
-  "showAttachments": true,
+  "showAttachments": false,
   "existingOnly": true,
-  "showOrphans": false,
-  "linkThickness": 2,
+  "showOrphans": true,
+  "linkThickness": 3,
+  "linkOpacity": 0.55,
   "textFadeThreshold": 1.3,
   "edgeLabelThreshold": 1.5,
   "collisionForce": 0,

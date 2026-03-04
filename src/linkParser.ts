@@ -332,6 +332,11 @@ export function assignCurvatures(links: GraphLink[]): void {
     const total = group.length;
     for (let i = 0; i < total; i++) {
       group[i].curvature = (i - (total - 1) / 2) * step;
+      // Negate curvature for non-canonical direction links so opposite-direction
+      // links (A→B, B→A) fan out instead of curving the same way
+      const sId = typeof group[i].source === "string" ? group[i].source : (group[i].source as GraphNode).id;
+      const tId = typeof group[i].target === "string" ? group[i].target : (group[i].target as GraphNode).id;
+      if (sId > tId) group[i].curvature = -group[i].curvature;
     }
   }
 }
