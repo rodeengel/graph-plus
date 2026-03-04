@@ -10,13 +10,14 @@ import {
   UNTYPED_LINK_KEY,
 } from "./types";
 
-// Matches [key:: value] and (key:: value) inline fields
-const INLINE_FIELD_RE = /[\[(](\w[\w\s]*)::([^\])]+)[\])]/g;
-
 // Matches [[wikilink]] or [[wikilink|alias]]
 const WIKILINK_RE = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
 
-// Matches #tag in body text (not inside frontmatter)
+// Matches key:: rest-of-line (handles bare, bracket-wrapped, and paren-wrapped inline fields)
+// The value capture extends to end of line; wikilinks are extracted from it separately.
+const INLINE_FIELD_RE = /([\w][\w ]*?)::[ \t]*(.*)/gm;
+
+// Matches #tag in body text
 const TAG_RE = /#([a-zA-Z_][\w/-]*)/g;
 
 // Extensions considered attachments (non-markdown)
@@ -31,8 +32,6 @@ const ATTACHMENT_EXTENSIONS = new Set([
 
 /**
  * Build the full graph data from the vault.
- * Parses typed links from frontmatter and inline fields,
- * plus untyped links from regular wikilinks.
  */
 export async function buildGraphData(
   app: App,
@@ -49,7 +48,7 @@ export async function buildGraphData(
     if (!node) {
       const ext = path.split(".").pop()?.toLowerCase() ?? "";
       const isAttachment = !path.endsWith(".md") && ATTACHMENT_EXTENSIONS.has(ext);
-      node = { id: path, name, tags: [], isAttachment, exists };
+      node = { id: path, name, tags: [], isAttachment, exists, properties: {} };
       nodeMap.set(path, node);
     }
     if (exists && !node.exists) {
@@ -67,17 +66,14 @@ export async function buildGraphData(
   }
 
   /**
-   * Resolve a link target. If createIfMissing is true (for explicit [[wikilinks]]),
-   * creates an unresolved node when the file doesn't exist.
-   * For plain text values (createIfMissing=false), returns null if unresolved.
+   * Resolve a wikilink target. Creates an unresolved node when the file doesn't exist.
    */
-  function resolveLink(linkText: string, sourceFile: TFile, createIfMissing: boolean = false): string | null {
+  function resolveWikilink(linkText: string, sourceFile: TFile): string {
     const dest = app.metadataCache.getFirstLinkpathDest(linkText, sourceFile.path);
     if (dest) {
       ensureNode(dest.path, dest.basename, true);
       return dest.path;
     }
-    if (!createIfMissing) return null;
     // Unresolved wikilink — create a non-existent node
     const unresolvedPath = linkText.endsWith(".md") ? linkText : linkText + ".md";
     const unresolvedName = linkText.replace(/\.md$/, "").split("/").pop() ?? linkText;
@@ -85,7 +81,7 @@ export async function buildGraphData(
     return unresolvedPath;
   }
 
-  // Read all files in parallel for inline field parsing
+  // Read all files in parallel
   const fileContents = await Promise.all(
     markdownFiles.map(async (file) => {
       try {
@@ -103,10 +99,19 @@ export async function buildGraphData(
     const cache = app.metadataCache.getFileCache(file);
     const typedTargets = new Set<string>(); // paths found via typed links
 
-    // --- Collect tags ---
-    // From frontmatter
+    // --- Collect tags & properties from frontmatter ---
     if (cache?.frontmatter) {
-      const fmTags = cache.frontmatter.tags ?? cache.frontmatter.tag;
+      const fm = cache.frontmatter;
+
+      // Store all frontmatter properties for query matching
+      for (const [key, value] of Object.entries(fm)) {
+        if (key === "position") continue; // internal Obsidian field
+        const values = Array.isArray(value) ? value : [value];
+        node.properties[key.toLowerCase()] = values.map((v) => String(v).toLowerCase());
+      }
+
+      // Extract tags
+      const fmTags = fm.tags ?? fm.tag;
       if (fmTags) {
         const tagArray = Array.isArray(fmTags) ? fmTags : [fmTags];
         for (const t of tagArray) {
@@ -116,21 +121,8 @@ export async function buildGraphData(
           }
         }
       }
-    }
-    // From body text
-    if (content) {
-      const bodyContent = stripFrontmatter(content);
-      for (const m of bodyContent.matchAll(TAG_RE)) {
-        const tag = m[1];
-        if (!node.tags.includes(tag)) {
-          node.tags.push(tag);
-        }
-      }
-    }
 
-    // --- Frontmatter typed links ---
-    if (cache?.frontmatter) {
-      const fm = cache.frontmatter;
+      // --- Frontmatter typed links (ONLY from explicit [[wikilinks]]) ---
       const skipKeys = new Set([
         "tags", "tag", "aliases", "alias",
         "cssclasses", "cssclass", "position",
@@ -141,56 +133,52 @@ export async function buildGraphData(
         const values = Array.isArray(value) ? value : [value];
         for (const v of values) {
           const strVal = String(v);
-          // Extract wikilinks from the value (create unresolved nodes for missing targets)
+          // Only extract explicit wikilinks — do NOT resolve plain text values
           for (const m of strVal.matchAll(WIKILINK_RE)) {
-            const targetPath = resolveLink(m[1], file, true);
-            if (targetPath) {
-              addLink(file.path, targetPath, key);
-              typedTargets.add(targetPath);
-            }
-          }
-          // Also handle plain text values that might be a note name (strict: no unresolved nodes)
-          if (!strVal.includes("[[") && !strVal.startsWith("#")) {
-            const targetPath = resolveLink(strVal.trim(), file, false);
-            if (targetPath) {
-              addLink(file.path, targetPath, key);
-              typedTargets.add(targetPath);
-            }
+            const targetPath = resolveWikilink(m[1], file);
+            addLink(file.path, targetPath, key);
+            typedTargets.add(targetPath);
           }
         }
       }
     }
 
-    // --- Inline fields + untyped links from body text ---
+    // --- Body text: tags, inline fields, untyped links ---
     if (content) {
       const bodyContent = stripFrontmatter(content);
 
-      // Find inline fields
+      // Collect body tags
+      for (const m of bodyContent.matchAll(TAG_RE)) {
+        const tag = m[1];
+        if (!node.tags.includes(tag)) {
+          node.tags.push(tag);
+        }
+      }
+
+      // Inline fields (bare, bracket-wrapped, and paren-wrapped)
       for (const fieldMatch of bodyContent.matchAll(INLINE_FIELD_RE)) {
         const fieldKey = fieldMatch[1].trim();
         const fieldValue = fieldMatch[2];
 
         for (const wikiMatch of fieldValue.matchAll(WIKILINK_RE)) {
-          const targetPath = resolveLink(wikiMatch[1], file, true);
-          if (targetPath) {
-            addLink(file.path, targetPath, fieldKey);
-            typedTargets.add(targetPath);
-          }
+          const targetPath = resolveWikilink(wikiMatch[1], file);
+          addLink(file.path, targetPath, fieldKey);
+          typedTargets.add(targetPath);
         }
       }
 
-      // Untyped wikilinks from body (create unresolved nodes for missing targets)
+      // Untyped wikilinks from body
       for (const untypedMatch of bodyContent.matchAll(WIKILINK_RE)) {
-        const targetPath = resolveLink(untypedMatch[1], file, true);
-        if (targetPath && !typedTargets.has(targetPath)) {
+        const targetPath = resolveWikilink(untypedMatch[1], file);
+        if (!typedTargets.has(targetPath)) {
           addLink(file.path, targetPath, UNTYPED_LINK_KEY);
         }
       }
     } else if (cache?.links) {
       // Fallback: use metadataCache links for untyped
       for (const linkCache of cache.links) {
-        const targetPath = resolveLink(linkCache.link, file, true);
-        if (targetPath && !typedTargets.has(targetPath)) {
+        const targetPath = resolveWikilink(linkCache.link, file);
+        if (!typedTargets.has(targetPath)) {
           addLink(file.path, targetPath, UNTYPED_LINK_KEY);
         }
       }
@@ -204,6 +192,9 @@ export async function buildGraphData(
 
   // Assign curvatures for parallel edges
   assignCurvatures(links);
+
+  // Clean up stale link types (types that no longer exist in the data)
+  cleanStaleLinkTypes(settings, links);
 
   return { nodes, links };
 }
@@ -233,44 +224,89 @@ export function ensureLinkType(
 }
 
 /**
- * Apply node groups: test groups in order, first match sets node.group.
- * Query formats: path:prefix, tag:#tagname, file:pattern, or bare substring.
+ * Remove link types from settings that have zero links in current data.
+ */
+function cleanStaleLinkTypes(settings: GraphLinkTypesSettings, links: GraphLink[]): void {
+  const activeTypes = new Set<string>();
+  for (const link of links) {
+    activeTypes.add(link.type);
+  }
+  for (const type of Object.keys(settings.linkTypes)) {
+    if (!activeTypes.has(type)) {
+      delete settings.linkTypes[type];
+    }
+  }
+}
+
+/**
+ * Apply node groups: test groups in order, first match sets node.groupColor.
  */
 export function applyNodeGroups(nodes: GraphNode[], groups: NodeGroup[]): void {
   for (const node of nodes) {
-    node.group = undefined;
+    node.groupColor = undefined;
     for (const group of groups) {
-      if (matchesGroupQuery(node, group.query)) {
-        node.group = group.name;
+      if (matchesQuery(node, group.query)) {
+        node.groupColor = group.color;
         break;
       }
     }
   }
 }
 
-function matchesGroupQuery(node: GraphNode, query: string): boolean {
+/**
+ * Test if a node matches a query string.
+ * Supports: path:prefix, file:pattern, tag:#name, [property:value], -negation, bare substring.
+ */
+export function matchesQuery(node: GraphNode, query: string): boolean {
   const q = query.trim();
   if (!q) return false;
 
+  // Negation
+  if (q.startsWith("-")) {
+    const inner = q.slice(1);
+    return inner.length > 0 && !matchesQuery(node, inner);
+  }
+
+  // path: prefix
   if (q.startsWith("path:")) {
     const prefix = q.slice(5);
-    return node.id.startsWith(prefix);
+    return node.id.toLowerCase().startsWith(prefix.toLowerCase());
   }
-  if (q.startsWith("tag:#")) {
-    const tag = q.slice(5);
-    return node.tags.some((t) => t === tag || t.startsWith(tag + "/"));
-  }
+
+  // file: pattern
   if (q.startsWith("file:")) {
     const pattern = q.slice(5).toLowerCase();
     return node.name.toLowerCase().includes(pattern);
   }
-  // Bare substring: match against path
-  return node.id.toLowerCase().includes(q.toLowerCase());
+
+  // tag:#name
+  if (q.startsWith("tag:#")) {
+    const tag = q.slice(5).toLowerCase();
+    return node.tags.some((t) => t.toLowerCase() === tag || t.toLowerCase().startsWith(tag + "/"));
+  }
+  // Also support tag:name (without #)
+  if (q.startsWith("tag:")) {
+    const tag = q.slice(4).toLowerCase();
+    return node.tags.some((t) => t.toLowerCase() === tag || t.toLowerCase().startsWith(tag + "/"));
+  }
+
+  // [property:value] — frontmatter property match
+  const propMatch = q.match(/^\[(\w+):(.+)\]$/);
+  if (propMatch) {
+    const prop = propMatch[1].toLowerCase();
+    const val = propMatch[2].toLowerCase().trim();
+    const nodeVals = node.properties[prop];
+    if (!nodeVals) return false;
+    return nodeVals.some((v) => v.includes(val));
+  }
+
+  // Bare text: match node name or path (case-insensitive substring)
+  const lower = q.toLowerCase();
+  return node.name.toLowerCase().includes(lower) || node.id.toLowerCase().includes(lower);
 }
 
 /**
  * Assign curvatures for parallel edges (multiple links between same node pair).
- * Groups by unordered pair, distributes curvatures symmetrically.
  */
 export function assignCurvatures(links: GraphLink[]): void {
   const pairMap = new Map<string, GraphLink[]>();
@@ -292,33 +328,28 @@ export function assignCurvatures(links: GraphLink[]): void {
       group[0].curvature = 0;
       continue;
     }
-    const step = 0.2;
+    const step = 0.3; // increased from 0.2 for more visible curvature
     const total = group.length;
     for (let i = 0; i < total; i++) {
-      // Distribute symmetrically around 0
       group[i].curvature = (i - (total - 1) / 2) * step;
     }
   }
 }
 
 /**
- * Filter graph data based on current visibility settings.
+ * Filter graph data based on current visibility settings and optional search query.
  */
 export function filterGraphData(
   data: GraphData,
   settings: GraphLinkTypesSettings,
   searchQuery?: string
 ): GraphData {
-  // First filter nodes by search and node-level filters
+  // Filter nodes by search and node-level filters
   const nodePassesFilter = (node: GraphNode): boolean => {
     if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      if (!node.name.toLowerCase().includes(q) && !node.id.toLowerCase().includes(q)) {
+      if (!matchesQuery(node, searchQuery)) {
         return false;
       }
-    }
-    if (!settings.showTags && node.tags.length > 0 && node.isAttachment === false && node.exists) {
-      // showTags controls whether tag-only nodes are shown — we don't filter by tag presence
     }
     if (!settings.showAttachments && node.isAttachment) {
       return false;
@@ -346,20 +377,28 @@ export function filterGraphData(
     return allowedNodes.has(sourceId) && allowedNodes.has(targetId);
   });
 
-  // Nodes that have at least one visible link
-  const connectedNodes = new Set<string>();
+  // Count links per node for sizing
+  const linkCounts = new Map<string, number>();
   for (const link of visibleLinks) {
     const sourceId = typeof link.source === "string" ? link.source : link.source.id;
     const targetId = typeof link.target === "string" ? link.target : link.target.id;
-    connectedNodes.add(sourceId);
-    connectedNodes.add(targetId);
+    linkCounts.set(sourceId, (linkCounts.get(sourceId) ?? 0) + 1);
+    linkCounts.set(targetId, (linkCounts.get(targetId) ?? 0) + 1);
   }
+
+  // Nodes connected via visible links
+  const connectedNodes = new Set<string>(linkCounts.keys());
 
   const filteredNodes = data.nodes.filter((n) => {
     if (!allowedNodes.has(n.id)) return false;
     if (settings.showOrphans) return true;
     return connectedNodes.has(n.id);
   });
+
+  // Set link counts on nodes
+  for (const node of filteredNodes) {
+    node.linkCount = linkCounts.get(node.id) ?? 0;
+  }
 
   return {
     nodes: filteredNodes,

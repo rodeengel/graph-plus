@@ -135,10 +135,10 @@ export class GraphLinkTypesView extends ItemView {
     if (!panel) return;
     panel.empty();
 
-    // --- Search box ---
+    // --- Search box (supports Obsidian query syntax) ---
     const searchInput = panel.createEl("input", {
       type: "text",
-      placeholder: "Search nodes...",
+      placeholder: "Search... (path:, file:, tag:, [prop:val])",
       cls: "glt-search-input",
     });
     searchInput.value = this.searchQuery;
@@ -149,11 +149,6 @@ export class GraphLinkTypesView extends ItemView {
 
     // --- Filters (collapsible) ---
     const filtersContent = this.createCollapsibleSection(panel, "Filters", true);
-    this.buildToggle(filtersContent, "Tags", this.settings.showTags, async (val) => {
-      this.settings.showTags = val;
-      await this.saveSettings();
-      this.pushDataToRenderer();
-    });
     this.buildToggle(filtersContent, "Attachments", this.settings.showAttachments, async (val) => {
       this.settings.showAttachments = val;
       await this.saveSettings();
@@ -175,7 +170,6 @@ export class GraphLinkTypesView extends ItemView {
 
     const counts = countLinkTypes(this.fullData);
 
-    // Sort: untyped last, rest alphabetical
     const types = Object.keys(this.settings.linkTypes).sort((a, b) => {
       if (a === UNTYPED_LINK_KEY) return 1;
       if (b === UNTYPED_LINK_KEY) return -1;
@@ -189,7 +183,6 @@ export class GraphLinkTypesView extends ItemView {
 
       const row = linkTypesContent.createDiv({ cls: "glt-filter-item" });
 
-      // Visibility checkbox
       const checkbox = row.createEl("input", { type: "checkbox" });
       checkbox.checked = type === UNTYPED_LINK_KEY ? this.settings.showUntyped : config.visible;
       checkbox.addEventListener("change", async () => {
@@ -202,7 +195,6 @@ export class GraphLinkTypesView extends ItemView {
         this.pushDataToRenderer();
       });
 
-      // Color swatch
       const swatch = row.createEl("input", { type: "color", cls: "glt-color-swatch" });
       swatch.value = config.color;
       swatch.title = `Change color for "${displayName}"`;
@@ -212,22 +204,27 @@ export class GraphLinkTypesView extends ItemView {
         this.pushDataToRenderer();
       });
 
-      // Label
       const label = row.createEl("label", { text: displayName });
       label.addEventListener("click", () => {
         checkbox.checked = !checkbox.checked;
         checkbox.dispatchEvent(new Event("change"));
       });
 
-      // Count
       row.createEl("span", { text: `(${count})`, cls: "glt-link-count" });
     }
 
     // --- Display (collapsible) ---
     const displayContent = this.createCollapsibleSection(panel, "Display", false);
 
-    this.buildToggle(displayContent, "Labels", this.settings.showLabels, async (val) => {
+    this.buildToggle(displayContent, "Edge labels", this.settings.showLabels, async (val) => {
       this.settings.showLabels = val;
+      await this.saveSettings();
+      if (this.renderer2D) this.renderer2D.updateSettings();
+      else this.pushDataToRenderer();
+    });
+
+    this.buildToggle(displayContent, "Node labels", this.settings.showNodeLabels, async (val) => {
+      this.settings.showNodeLabels = val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
       else this.pushDataToRenderer();
@@ -235,6 +232,13 @@ export class GraphLinkTypesView extends ItemView {
 
     this.buildToggle(displayContent, "Arrows", this.settings.showArrows, async (val) => {
       this.settings.showArrows = val;
+      await this.saveSettings();
+      if (this.renderer2D) this.renderer2D.updateSettings();
+      else this.pushDataToRenderer();
+    });
+
+    this.buildToggle(displayContent, "Scale by connections", this.settings.scaleNodeByLinks, async (val) => {
+      this.settings.scaleNodeByLinks = val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
       else this.pushDataToRenderer();
@@ -269,8 +273,9 @@ export class GraphLinkTypesView extends ItemView {
       if (this.renderer2D) this.renderer2D.updateSettings();
     });
 
-    this.buildSlider(forcesContent, "Repel force", this.settings.chargeStrength, -500, -10, 10, async (val) => {
-      this.settings.chargeStrength = val;
+    // Repel force: display as positive (10-500), store as negative internally
+    this.buildSlider(forcesContent, "Repel force", Math.abs(this.settings.chargeStrength), 10, 500, 10, async (val) => {
+      this.settings.chargeStrength = -val;
       await this.saveSettings();
       if (this.renderer2D) this.renderer2D.updateSettings();
     });
@@ -331,13 +336,13 @@ export class GraphLinkTypesView extends ItemView {
     slider.value = String(value);
 
     const valueDisplay = controls.createEl("span", {
-      text: String(value),
+      text: String(Math.round(value * 100) / 100),
       cls: "glt-slider-value",
     });
 
     slider.addEventListener("input", () => {
       const v = parseFloat(slider.value);
-      valueDisplay.textContent = String(v);
+      valueDisplay.textContent = String(Math.round(v * 100) / 100);
       onChange(v);
     });
   }
@@ -348,20 +353,17 @@ export class GraphLinkTypesView extends ItemView {
     const renderGroups = () => {
       parent.empty();
 
+      // Help text
+      parent.createEl("div", {
+        text: "Query: path:, file:, tag:#, [prop:val]",
+        cls: "glt-group-help",
+      });
+
       for (let i = 0; i < groups.length; i++) {
         const group = groups[i];
         const row = parent.createDiv({ cls: "glt-group-row" });
 
-        const nameInput = row.createEl("input", { type: "text", placeholder: "Name" });
-        nameInput.value = group.name;
-        nameInput.className = "glt-group-name-input";
-        nameInput.addEventListener("change", async () => {
-          group.name = nameInput.value;
-          await this.saveSettings();
-          await this.rebuildGraph();
-        });
-
-        const queryInput = row.createEl("input", { type: "text", placeholder: "Query (path:, tag:#, file:)" });
+        const queryInput = row.createEl("input", { type: "text", placeholder: "e.g. [type:reference]" });
         queryInput.value = group.query;
         queryInput.className = "glt-group-query-input";
         queryInput.addEventListener("change", async () => {
@@ -389,7 +391,7 @@ export class GraphLinkTypesView extends ItemView {
 
       const addBtn = parent.createEl("button", { text: "+ Add group", cls: "glt-group-add-btn" });
       addBtn.addEventListener("click", async () => {
-        groups.push({ name: "", query: "", color: "#4363d8" });
+        groups.push({ query: "", color: "#4363d8" });
         await this.saveSettings();
         renderGroups();
       });

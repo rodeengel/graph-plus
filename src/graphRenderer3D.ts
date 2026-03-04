@@ -68,15 +68,15 @@ export class GraphRenderer3D {
         .height(rect.height)
         .backgroundColor("rgba(0,0,0,0)")
         .nodeColor((node: any) => {
-          // Group color takes priority
-          if (node.group) {
-            const group = this.settings.nodeGroups.find((g: any) => g.name === node.group);
-            if (group) return group.color;
-          }
+          if (node.groupColor) return node.groupColor;
           return this.settings.nodeColor;
         })
         .nodeLabel((node: any) => node.name)
-        .nodeVal(() => this.settings.nodeSize)
+        .nodeVal((node: any) => {
+          const base = this.settings.nodeSize;
+          if (!this.settings.scaleNodeByLinks || !node.linkCount) return base;
+          return base * (1 + Math.sqrt(Math.max(0, node.linkCount - 1)) * 0.5);
+        })
         .linkColor((link: any) => {
           const config = this.settings.linkTypes[link.type];
           return config?.color ?? "#888";
@@ -87,7 +87,7 @@ export class GraphRenderer3D {
         })
         .linkWidth(this.settings.linkThickness)
         .linkCurvature((link: any) => link.curvature ?? 0)
-        .linkDirectionalArrowLength(this.settings.showArrows ? 6 : 0)
+        .linkDirectionalArrowLength(this.settings.showArrows ? 6 * (this.settings.linkThickness / 1.5) : 0)
         .linkDirectionalArrowRelPos(1)
         .onNodeClick((node: any) => {
           this.app.workspace.openLinkText(node.id, "", false);
@@ -122,7 +122,6 @@ export class GraphRenderer3D {
     if (this.destroyed) return;
 
     if (!this.graph) {
-      // Graph not initialized yet, store data for later
       this.pendingData = data;
       return;
     }
@@ -136,10 +135,11 @@ export class GraphRenderer3D {
     const nodes = data.nodes.map((n) => ({
       id: n.id,
       name: n.name,
-      group: n.group,
+      groupColor: n.groupColor,
       exists: n.exists,
       tags: n.tags,
       isAttachment: n.isAttachment,
+      linkCount: n.linkCount,
     }));
 
     const links = data.links.map((l) => ({

@@ -183,7 +183,12 @@
   flex-wrap: wrap;
 }
 
-.glt-group-name-input,
+.glt-group-help {
+  font-size: 0.75em;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+
 .glt-group-query-input {
   flex: 1;
   min-width: 50px;

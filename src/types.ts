@@ -6,7 +6,9 @@ export interface GraphNode extends SimulationNodeDatum {
   tags: string[];
   isAttachment: boolean;
   exists: boolean;
-  group?: string;
+  groupColor?: string;  // color from first matching group
+  properties: Record<string, string[]>; // frontmatter properties for query matching
+  linkCount?: number;   // number of visible links (set during filtering)
 }
 
 export interface GraphLink extends SimulationLinkDatum<GraphNode> {
@@ -27,7 +29,6 @@ export interface LinkTypeConfig {
 }
 
 export interface NodeGroup {
-  name: string;
   query: string;
   color: string;
 }
@@ -35,16 +36,16 @@ export interface NodeGroup {
 export interface GraphLinkTypesSettings {
   linkTypes: Record<string, LinkTypeConfig>;
   showLabels: boolean;
+  showNodeLabels: boolean;
   showUntyped: boolean;
   defaultMode: "2d" | "3d";
   nodeSize: number;
   chargeStrength: number;
-  centerForce: number;      // 0-1, strength of centering force
+  centerForce: number;      // 0-1, strength of centering force (forceX/forceY)
   linkStrength: number;     // 0-1, strength of link attraction
   linkDistance: number;
   nodeGroups: NodeGroup[];
   showArrows: boolean;
-  showTags: boolean;
   showAttachments: boolean;
   existingOnly: boolean;
   showOrphans: boolean;
@@ -53,11 +54,13 @@ export interface GraphLinkTypesSettings {
   animate: boolean;
   nodeColor: string;
   nodeColorHover: string;
+  scaleNodeByLinks: boolean;
 }
 
 export const DEFAULT_SETTINGS: GraphLinkTypesSettings = {
   linkTypes: {},
   showLabels: false,
+  showNodeLabels: true,
   showUntyped: true,
   defaultMode: "2d",
   nodeSize: 5,
@@ -67,7 +70,6 @@ export const DEFAULT_SETTINGS: GraphLinkTypesSettings = {
   linkDistance: 60,
   nodeGroups: [],
   showArrows: false,
-  showTags: true,
   showAttachments: true,
   existingOnly: false,
   showOrphans: true,
@@ -76,6 +78,7 @@ export const DEFAULT_SETTINGS: GraphLinkTypesSettings = {
   animate: true,
   nodeColor: "#888888",
   nodeColorHover: "#7b6cd9",
+  scaleNodeByLinks: false,
 };
 
 export const COLOR_PALETTE = [

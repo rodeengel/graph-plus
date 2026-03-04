@@ -45,6 +45,18 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Show node labels")
+      .setDesc("Display node names when zoomed in (past text fade threshold)")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.showNodeLabels)
+          .onChange(async (value) => {
+            this.plugin.settings.showNodeLabels = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
       .setName("Show untyped links")
       .setDesc("Show regular wikilinks that have no type annotation")
       .addToggle((toggle) =>
@@ -67,6 +79,18 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.showArrows)
           .onChange(async (value) => {
             this.plugin.settings.showArrows = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Scale nodes by connections")
+      .setDesc("Make nodes with more links appear larger")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.scaleNodeByLinks)
+          .onChange(async (value) => {
+            this.plugin.settings.scaleNodeByLinks = value;
             await this.plugin.saveSettings();
           })
       );
@@ -99,7 +123,6 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           })
       );
 
-    // --- Node colors ---
     new Setting(containerEl)
       .setName("Node color")
       .setDesc("Default color for graph nodes")
@@ -126,18 +149,6 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
 
     // --- Filters ---
     containerEl.createEl("h3", { text: "Filters" });
-
-    new Setting(containerEl)
-      .setName("Show tags")
-      .setDesc("Include nodes that have tags")
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.showTags)
-          .onChange(async (value) => {
-            this.plugin.settings.showTags = value;
-            await this.plugin.saveSettings();
-          })
-      );
 
     new Setting(containerEl)
       .setName("Show attachments")
@@ -180,7 +191,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Node size")
-      .setDesc("Radius of graph nodes (1-20)")
+      .setDesc("Base radius of graph nodes (1-20)")
       .addSlider((slider) =>
         slider
           .setLimits(1, 20, 1)
@@ -194,7 +205,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Center force")
-      .setDesc("Strength of centering force (0-1)")
+      .setDesc("Pull nodes toward center (0-1)")
       .addSlider((slider) =>
         slider
           .setLimits(0, 1, 0.05)
@@ -208,14 +219,14 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Repel force")
-      .setDesc("Charge force between nodes (-500 to -10)")
+      .setDesc("Push nodes apart (10-500, higher = more spread)")
       .addSlider((slider) =>
         slider
-          .setLimits(-500, -10, 10)
-          .setValue(this.plugin.settings.chargeStrength)
+          .setLimits(10, 500, 10)
+          .setValue(Math.abs(this.plugin.settings.chargeStrength))
           .setDynamicTooltip()
           .onChange(async (value) => {
-            this.plugin.settings.chargeStrength = value;
+            this.plugin.settings.chargeStrength = -value;
             await this.plugin.saveSettings();
           })
       );
@@ -250,7 +261,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Pause physics")
-      .setDesc("Freeze the force simulation (nodes stop moving)")
+      .setDesc("Freeze the force simulation")
       .addToggle((toggle) =>
         toggle
           .setValue(!this.plugin.settings.animate)
@@ -263,7 +274,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
     // --- Node Groups ---
     containerEl.createEl("h3", { text: "Node Groups" });
     containerEl.createEl("p", {
-      text: "Groups color nodes by query. Queries: path:prefix, tag:#name, file:pattern, or bare substring. First matching group wins.",
+      text: "Color nodes by query. Supports: path:prefix, file:name, tag:#name, [property:value], bare substring. First match wins.",
       cls: "setting-item-description",
     });
 
@@ -337,16 +348,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
         .setName(`Group ${i + 1}`)
         .addText((text) =>
           text
-            .setPlaceholder("Name")
-            .setValue(group.name)
-            .onChange(async (value) => {
-              group.name = value;
-              await this.plugin.saveSettings();
-            })
-        )
-        .addText((text) =>
-          text
-            .setPlaceholder("Query (path:, tag:#, file:)")
+            .setPlaceholder("e.g. [type:reference]")
             .setValue(group.query)
             .onChange(async (value) => {
               group.query = value;
@@ -373,7 +375,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
 
     new Setting(container).addButton((button) =>
       button.setButtonText("Add group").onClick(async () => {
-        groups.push({ name: "", query: "", color: "#4363d8" });
+        groups.push({ query: "", color: "#4363d8" });
         await this.plugin.saveSettings();
         this.renderGroupSettings(container);
       })

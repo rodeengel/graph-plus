@@ -2,15 +2,16 @@ import {
   forceSimulation,
   forceLink,
   forceManyBody,
-  forceCenter,
   forceCollide,
+  forceX,
+  forceY,
   type Simulation,
 } from "d3-force";
 import { select } from "d3-selection";
 import { zoom, zoomIdentity, type ZoomBehavior, type D3ZoomEvent } from "d3-zoom";
 import { drag, type D3DragEvent } from "d3-drag";
 import type { App } from "obsidian";
-import type { GraphNode, GraphLink, GraphData, GraphLinkTypesSettings, NodeGroup } from "./types";
+import type { GraphNode, GraphLink, GraphData, GraphLinkTypesSettings } from "./types";
 import { UNTYPED_LINK_KEY } from "./types";
 
 export class GraphRenderer2D {
@@ -38,7 +39,6 @@ export class GraphRenderer2D {
 
   // Resolved CSS fallback colors
   private resolvedTextColor: string;
-  private resolvedAccentColor: string;
 
   constructor(container: HTMLElement, app: App, settings: GraphLinkTypesSettings) {
     this.container = container;
@@ -48,7 +48,6 @@ export class GraphRenderer2D {
     // Resolve CSS variables at construction time for Canvas compatibility
     const cs = getComputedStyle(container);
     this.resolvedTextColor = cs.getPropertyValue("--text-normal").trim() || "#ddd";
-    this.resolvedAccentColor = cs.getPropertyValue("--interactive-accent").trim() || "#7b6cd9";
 
     // Create canvas
     this.canvas = document.createElement("canvas");
@@ -65,10 +64,11 @@ export class GraphRenderer2D {
     this.dpr = window.devicePixelRatio || 1;
     this.updateSize();
 
-    // Simulation
+    // Simulation — use forceX/forceY instead of forceCenter for per-node centering
     this.simulation = forceSimulation<GraphNode>()
       .force("charge", forceManyBody().strength(settings.chargeStrength))
-      .force("center", forceCenter(this.width / 2, this.height / 2).strength(settings.centerForce))
+      .force("x", forceX(this.width / 2).strength(settings.centerForce * 0.1))
+      .force("y", forceY(this.height / 2).strength(settings.centerForce * 0.1))
       .force("collide", forceCollide(settings.nodeSize + 2))
       .on("tick", () => this.render());
 
@@ -84,8 +84,8 @@ export class GraphRenderer2D {
         this.render();
       });
 
-    // Drag — must be registered BEFORE zoom so that drag's
-    // stopImmediatePropagation prevents zoom from panning while dragging a node
+    // Drag — registered BEFORE zoom so stopImmediatePropagation prevents
+    // zoom from panning while dragging a node
     const dragBehavior = drag<HTMLCanvasElement, unknown>()
       .subject((event) => this.findNode(event.x, event.y))
       .on("start", (event: D3DragEvent<HTMLCanvasElement, unknown, GraphNode>) => {
@@ -116,7 +116,10 @@ export class GraphRenderer2D {
     // Resize observer
     this.resizeObserver = new ResizeObserver(() => {
       this.updateSize();
-      this.simulation.force("center", forceCenter(this.width / 2, this.height / 2));
+      const xForce = this.simulation.force("x") as any;
+      const yForce = this.simulation.force("y") as any;
+      if (xForce) xForce.x(this.width / 2);
+      if (yForce) yForce.y(this.height / 2);
       this.simulation.alpha(0.1).restart();
     });
     this.resizeObserver.observe(this.container);
@@ -142,7 +145,6 @@ export class GraphRenderer2D {
     this.simulation.alpha(1).restart();
 
     if (!this.settings.animate) {
-      // Run simulation to completion synchronously then stop
       this.simulation.stop();
       for (let i = 0; i < 300; i++) this.simulation.tick();
       this.render();
@@ -154,8 +156,10 @@ export class GraphRenderer2D {
     const charge = this.simulation.force("charge") as any;
     if (charge) charge.strength(this.settings.chargeStrength);
 
-    const center = this.simulation.force("center") as any;
-    if (center) center.strength(this.settings.centerForce);
+    const xForce = this.simulation.force("x") as any;
+    if (xForce) xForce.strength(this.settings.centerForce * 0.1);
+    const yForce = this.simulation.force("y") as any;
+    if (yForce) yForce.strength(this.settings.centerForce * 0.1);
 
     const link = this.simulation.force("link") as any;
     if (link) {
@@ -175,7 +179,7 @@ export class GraphRenderer2D {
     this.render();
   }
 
-  /** Start or stop the simulation animation */
+  /** Start or stop the simulation */
   setAnimate(running: boolean): void {
     if (running) {
       this.simulation.alpha(0.3).restart();
@@ -196,12 +200,14 @@ export class GraphRenderer2D {
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
   }
 
+  private getNodeRadius(node: GraphNode): number {
+    const base = this.settings.nodeSize;
+    if (!this.settings.scaleNodeByLinks || !node.linkCount) return base;
+    return base * (1 + Math.sqrt(Math.max(0, node.linkCount - 1)) * 0.5);
+  }
+
   private getNodeColor(node: GraphNode): string {
-    // Group color takes priority
-    if (node.group) {
-      const group = this.settings.nodeGroups.find((g) => g.name === node.group);
-      if (group) return group.color;
-    }
+    if (node.groupColor) return node.groupColor;
     return this.settings.nodeColor;
   }
 
@@ -215,8 +221,8 @@ export class GraphRenderer2D {
     ctx.translate(t.x, t.y);
     ctx.scale(t.k, t.k);
 
-    const nodeSize = this.settings.nodeSize;
     const showLabels = this.settings.showLabels;
+    const showNodeLabels = this.settings.showNodeLabels;
     const showArrows = this.settings.showArrows;
     const linkThickness = this.settings.linkThickness;
     const textFadeThreshold = this.settings.textFadeThreshold;
@@ -245,7 +251,6 @@ export class GraphRenderer2D {
       const config = this.settings.linkTypes[link.type];
       const color = config?.color ?? "#888";
 
-      // Dim non-connected links when hovering
       let alpha = 1;
       if (hoveredId) {
         const sId = source.id;
@@ -265,14 +270,15 @@ export class GraphRenderer2D {
       const tx = target.x!;
       const ty = target.y!;
 
+      const targetRadius = this.getNodeRadius(target);
+
       if (link.curvature !== 0) {
-        // Curved edge: control point perpendicular to midpoint
+        // Curved edge
         const mx = (sx + tx) / 2;
         const my = (sy + ty) / 2;
         const dx = tx - sx;
         const dy = ty - sy;
         const len = Math.sqrt(dx * dx + dy * dy) || 1;
-        // Perpendicular offset
         const nx = -dy / len;
         const ny = dx / len;
         const offset = link.curvature * len * 0.5;
@@ -283,12 +289,10 @@ export class GraphRenderer2D {
         ctx.quadraticCurveTo(cpx, cpy, tx, ty);
         ctx.stroke();
 
-        // Arrowhead on curved edge
         if (showArrows) {
-          this.drawArrowhead(ctx, cpx, cpy, tx, ty, nodeSize, color, alpha);
+          this.drawArrowhead(ctx, cpx, cpy, tx, ty, targetRadius, color, alpha);
         }
 
-        // Edge label at curve midpoint
         if (showLabels && link.type !== UNTYPED_LINK_KEY && t.k > 0.5) {
           const labelX = (sx + 2 * cpx + tx) / 4;
           const labelY = (sy + 2 * cpy + ty) / 4;
@@ -304,12 +308,10 @@ export class GraphRenderer2D {
         ctx.lineTo(tx, ty);
         ctx.stroke();
 
-        // Arrowhead on straight edge
         if (showArrows) {
-          this.drawArrowhead(ctx, sx, sy, tx, ty, nodeSize, color, alpha);
+          this.drawArrowhead(ctx, sx, sy, tx, ty, targetRadius, color, alpha);
         }
 
-        // Edge labels
         if (showLabels && link.type !== UNTYPED_LINK_KEY && t.k > 0.5) {
           const lmx = (sx + tx) / 2;
           const lmy = (sy + ty) / 2;
@@ -334,15 +336,15 @@ export class GraphRenderer2D {
       }
 
       const isHovered = node.id === hoveredId;
-      const radius = isHovered ? nodeSize + 2 : nodeSize;
+      const radius = isHovered ? this.getNodeRadius(node) + 2 : this.getNodeRadius(node);
       const fillColor = isHovered
         ? this.settings.nodeColorHover
         : this.getNodeColor(node);
 
       ctx.globalAlpha = alpha;
 
-      // Non-existent nodes: dashed stroke outline
       if (!node.exists) {
+        // Non-existent nodes: dashed stroke outline
         ctx.beginPath();
         ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
         ctx.setLineDash([3, 3]);
@@ -357,8 +359,9 @@ export class GraphRenderer2D {
         ctx.fill();
       }
 
-      // Node label: on hover or when zoom exceeds text fade threshold
-      if ((isHovered || t.k > textFadeThreshold) && node.name) {
+      // Node label: always on hover; when showNodeLabels is on, also at zoom > threshold
+      const showLabel = isHovered || (showNodeLabels && t.k > textFadeThreshold);
+      if (showLabel && node.name) {
         ctx.font = `${12 / Math.max(t.k, 0.5)}px sans-serif`;
         ctx.fillStyle = this.resolvedTextColor;
         ctx.textAlign = "center";
@@ -371,12 +374,12 @@ export class GraphRenderer2D {
     ctx.restore();
   }
 
-  /** Draw a filled triangle arrowhead pointing at (tx, ty), offset by nodeSize */
+  /** Draw a filled triangle arrowhead, scaled by link thickness */
   private drawArrowhead(
     ctx: CanvasRenderingContext2D,
     fromX: number, fromY: number,
     toX: number, toY: number,
-    nodeSize: number,
+    nodeRadius: number,
     color: string,
     alpha: number
   ): void {
@@ -388,12 +391,13 @@ export class GraphRenderer2D {
     const ux = dx / len;
     const uy = dy / len;
 
-    // Position arrowhead at the edge of the target node
-    const tipX = toX - ux * (nodeSize + 2);
-    const tipY = toY - uy * (nodeSize + 2);
+    const tipX = toX - ux * (nodeRadius + 2);
+    const tipY = toY - uy * (nodeRadius + 2);
 
-    const arrowLen = 8;
-    const arrowWidth = 4;
+    // Scale arrowhead with link thickness
+    const scale = this.settings.linkThickness / 1.5; // normalize to default thickness
+    const arrowLen = 8 * scale;
+    const arrowWidth = 4 * scale;
 
     const baseX = tipX - ux * arrowLen;
     const baseY = tipY - uy * arrowLen;
@@ -412,11 +416,11 @@ export class GraphRenderer2D {
     const t = this.transform;
     const x = (mouseX - t.x) / t.k;
     const y = (mouseY - t.y) / t.k;
-    const r = this.settings.nodeSize + 4;
 
     for (let i = this.nodes.length - 1; i >= 0; i--) {
       const node = this.nodes[i];
       if (node.x == null || node.y == null) continue;
+      const r = this.getNodeRadius(node) + 4;
       const dx = x - node.x;
       const dy = y - node.y;
       if (dx * dx + dy * dy < r * r) return node;
