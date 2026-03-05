@@ -421,6 +421,7 @@ export class GraphLinkTypesView extends ItemView {
           ltv[type] = config.visible;
         }
         snapshot.linkTypeVisibility = ltv;
+        snapshot.searchQuery = this.searchQuery;
 
         this.settings.profiles.push({ name, snapshot });
         await this.saveSettings();
@@ -468,6 +469,9 @@ export class GraphLinkTypesView extends ItemView {
     if (snapshot.nodeGroups !== undefined) {
       this.settings.nodeGroups = JSON.parse(JSON.stringify(snapshot.nodeGroups));
     }
+
+    // Apply search query
+    if (snapshot.searchQuery !== undefined) this.searchQuery = snapshot.searchQuery;
 
     // Apply link type visibility (preserve colors)
     if (snapshot.linkTypeVisibility) {
