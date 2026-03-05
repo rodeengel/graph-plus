@@ -25,6 +25,8 @@ interface ForceGraph3DInstance {
   nodeRelSize(n: number): ForceGraph3DInstance;
   onNodeClick(fn: (node: any) => void): ForceGraph3DInstance;
   onNodeRightClick(fn: (node: any) => void): ForceGraph3DInstance;
+  nodeThreeObject(fn: ((node: any) => any) | null): ForceGraph3DInstance;
+  nodeThreeObjectExtend(v: boolean): ForceGraph3DInstance;
   d3Force(name: string, force?: any): any;
   d3ReheatSimulation(): ForceGraph3DInstance;
   zoomToFit(ms?: number, padding?: number): ForceGraph3DInstance;
@@ -42,6 +44,7 @@ export class GraphRenderer3D {
   private resizeObserver: ResizeObserver;
   private destroyed = false;
   private pendingData: GraphData | null = null;
+  private THREE: any = null;
 
   constructor(container: HTMLElement, app: App, settings: GraphLinkTypesSettings) {
     this.container = container;
@@ -65,9 +68,38 @@ export class GraphRenderer3D {
     this.initGraph();
   }
 
+  private getNodeVal(node: any): number {
+    const base = this.settings.nodeSize;
+    if (!this.settings.scaleNodeByLinks || !node.linkCount) return base;
+    const s = 1 + Math.sqrt(Math.max(0, node.linkCount - 1)) * 0.5;
+    return base * s * s * s;
+  }
+
+  private nodeThreeObjectFn = (node: any): any => {
+    if (!node.exists && this.THREE) {
+      const val = this.getNodeVal(node);
+      const radius = Math.cbrt(val) * this.settings.nodeRelSize3D;
+      const color = node.groupColor || this.settings.nodeColor;
+      const geometry = new this.THREE.SphereGeometry(radius, 12, 8);
+      const wireframe = new this.THREE.WireframeGeometry(geometry);
+      const material = new this.THREE.LineBasicMaterial({
+        color,
+        transparent: true,
+        opacity: this.settings.nodeOpacity3D,
+      });
+      return new this.THREE.LineSegments(wireframe, material);
+    }
+    return undefined;
+  };
+
   private async initGraph(): Promise<void> {
     try {
-      const ForceGraph3D = (await import("3d-force-graph")).default;
+      const [ForceGraph3DModule, threeModule] = await Promise.all([
+        import("3d-force-graph"),
+        import("three"),
+      ]);
+      const ForceGraph3D = ForceGraph3DModule.default;
+      this.THREE = threeModule;
       if (this.destroyed) return;
 
       const rect = this.wrapper.getBoundingClientRect();
@@ -80,14 +112,8 @@ export class GraphRenderer3D {
           return this.settings.nodeColor;
         })
         .nodeLabel((node: any) => node.name)
-        .nodeVal((node: any) => {
-          const base = this.settings.nodeSize;
-          if (!this.settings.scaleNodeByLinks || !node.linkCount) return base;
-          // Cube the scale factor: nodeVal is volume, so cbrt(val) gives radius.
-          // Cubing compensates so the visible radius matches the 2D scaling.
-          const s = 1 + Math.sqrt(Math.max(0, node.linkCount - 1)) * 0.5;
-          return base * s * s * s;
-        })
+        .nodeVal((node: any) => this.getNodeVal(node))
+        .nodeThreeObject(this.nodeThreeObjectFn)
         .linkColor((link: any) => {
           const config = this.settings.linkTypes[link.type];
           return config?.color ?? "#888";
@@ -182,12 +208,8 @@ export class GraphRenderer3D {
       .linkOpacity(this.settings.linkOpacity)
       .nodeOpacity(this.settings.nodeOpacity3D)
       .nodeRelSize(this.settings.nodeRelSize3D)
-      .nodeVal((node: any) => {
-        const base = this.settings.nodeSize;
-        if (!this.settings.scaleNodeByLinks || !node.linkCount) return base;
-        const s = 1 + Math.sqrt(Math.max(0, node.linkCount - 1)) * 0.5;
-        return base * s * s * s;
-      });
+      .nodeVal((node: any) => this.getNodeVal(node))
+      .nodeThreeObject(this.nodeThreeObjectFn);
   }
 
   /** Update force parameters and reheat the simulation */

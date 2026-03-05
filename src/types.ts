@@ -33,6 +33,11 @@ export interface NodeGroup {
   color: string;
 }
 
+export interface SettingsProfile {
+  name: string;
+  snapshot: Record<string, any>;
+}
+
 export interface GraphLinkTypesSettings {
   linkTypes: Record<string, LinkTypeConfig>;
   showLabels: boolean;
@@ -60,6 +65,7 @@ export interface GraphLinkTypesSettings {
   nodeColor: string;
   nodeColorHover: string;
   scaleNodeByLinks: boolean;
+  profiles: SettingsProfile[];
 }
 
 export const DEFAULT_SETTINGS: GraphLinkTypesSettings = {
@@ -89,6 +95,7 @@ export const DEFAULT_SETTINGS: GraphLinkTypesSettings = {
   nodeColor: "#888888",
   nodeColorHover: "#7b6cd9",
   scaleNodeByLinks: false,
+  profiles: [],
 };
 
 // --- Declarative settings schema ---
@@ -122,7 +129,7 @@ export const SETTING_DEFS: SettingDef[] = [
   { key: "showArrows", label: "Arrows", desc: "Draw directional arrowheads on links", section: "display", type: "toggle", effect: "visual", renderers: "both" },
   { key: "scaleNodeByLinks", label: "Scale by connections", desc: "Make nodes with more links appear larger", section: "display", type: "toggle", effect: "visual", renderers: "both" },
   { key: "nodeSize", label: "Node size", desc: "Base radius of graph nodes (1–20)", section: "display", type: "slider", min: 1, max: 20, step: 1, effect: "visual", renderers: "both" },
-  { key: "linkThickness", label: "Link thickness", desc: "Width of graph edges (0.5–5)", section: "display", type: "slider", min: 0.5, max: 5, step: 0.5, effect: "visual", renderers: "both" },
+  { key: "linkThickness", label: "Link thickness", desc: "Width of graph edges (0.5–10)", section: "display", type: "slider", min: 0.5, max: 10, step: 0.5, effect: "visual", renderers: "both" },
 
   // 2D Display
   { key: "showLabels", label: "Edge labels", desc: "Display link type names on edges", section: "display2d", type: "toggle", effect: "visual", renderers: "2d" },

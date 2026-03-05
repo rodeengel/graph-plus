@@ -154,8 +154,13 @@ export class GraphRenderer2D {
     }
   }
 
-  /** Update forces and display settings without rebuilding data */
+  /** Update visual display settings without reheating physics */
   updateSettings(): void {
+    this.render();
+  }
+
+  /** Update force parameters and reheat simulation */
+  updateForces(): void {
     const charge = this.simulation.force("charge") as any;
     if (charge) charge.strength(this.settings.chargeStrength);
 

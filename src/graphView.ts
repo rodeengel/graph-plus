@@ -1,5 +1,5 @@
 import { ItemView, WorkspaceLeaf } from "obsidian";
-import type { GraphLinkTypesSettings, GraphData, NodeGroup, SettingDef } from "./types";
+import type { GraphLinkTypesSettings, GraphData, NodeGroup, SettingDef, SettingsProfile } from "./types";
 import { UNTYPED_LINK_KEY, SETTING_DEFS } from "./types";
 import { buildGraphData, filterGraphData, countLinkTypes } from "./linkParser";
 import { GraphRenderer2D } from "./graphRenderer2D";
@@ -55,8 +55,8 @@ export class GraphLinkTypesView extends ItemView {
     this.filterPanelEl = body.createDiv({ cls: "glt-filter-panel" });
     this.canvasContainerEl = body.createDiv({ cls: "glt-canvas-container" });
 
-    // Floating sidebar toggle button
-    this.toggleBtnEl = this.canvasContainerEl.createEl("button", {
+    // Floating sidebar toggle button — on body for z-index above overlay sidebar
+    this.toggleBtnEl = body.createEl("button", {
       text: "\u2261",
       cls: "glt-sidebar-toggle",
       attr: { "aria-label": "Toggle sidebar" },
@@ -193,6 +193,10 @@ export class GraphLinkTypesView extends ItemView {
     // --- Groups (manual — complex editor) ---
     const groupsContent = this.createCollapsibleSection(panel, "Groups", false);
     this.buildGroupEditor(groupsContent);
+
+    // --- Profiles ---
+    const profilesContent = this.createCollapsibleSection(panel, "Profiles", false);
+    this.buildProfileEditor(profilesContent);
   }
 
   /** Render all settings for a section from the declarative schema */
@@ -229,7 +233,7 @@ export class GraphLinkTypesView extends ItemView {
         if ((r === "both" || r === "3d") && this.renderer3D) this.renderer3D.updateSettings();
         break;
       case "force":
-        if (this.renderer2D) this.renderer2D.updateSettings();
+        if (this.renderer2D) this.renderer2D.updateForces();
         if (this.renderer3D) this.renderer3D.updateForces();
         break;
       case "animate":
@@ -384,11 +388,102 @@ export class GraphLinkTypesView extends ItemView {
     renderGroups();
   }
 
+  private buildProfileEditor(parent: HTMLElement): void {
+    const renderProfiles = () => {
+      parent.empty();
+
+      // Save current as new profile
+      const saveRow = parent.createDiv({ cls: "glt-profile-save-row" });
+      const nameInput = saveRow.createEl("input", {
+        type: "text",
+        placeholder: "Profile name",
+        cls: "glt-profile-name-input",
+      });
+      const saveBtn = saveRow.createEl("button", {
+        text: "Save",
+        cls: "glt-sidebar-btn",
+      });
+      saveBtn.addEventListener("click", async () => {
+        const name = nameInput.value.trim();
+        if (!name) return;
+
+        const snapshot: Record<string, any> = {};
+        for (const def of SETTING_DEFS) {
+          snapshot[def.key] = this.settings[def.key];
+        }
+        snapshot.showUntyped = this.settings.showUntyped;
+        snapshot.nodeColor = this.settings.nodeColor;
+        snapshot.nodeColorHover = this.settings.nodeColorHover;
+        snapshot.nodeGroups = JSON.parse(JSON.stringify(this.settings.nodeGroups));
+        // Link type visibility
+        const ltv: Record<string, boolean> = {};
+        for (const [type, config] of Object.entries(this.settings.linkTypes)) {
+          ltv[type] = config.visible;
+        }
+        snapshot.linkTypeVisibility = ltv;
+
+        this.settings.profiles.push({ name, snapshot });
+        await this.saveSettings();
+        nameInput.value = "";
+        renderProfiles();
+      });
+
+      // List existing profiles
+      for (let i = 0; i < this.settings.profiles.length; i++) {
+        const profile = this.settings.profiles[i];
+        const row = parent.createDiv({ cls: "glt-profile-row" });
+        row.createEl("span", { text: profile.name, cls: "glt-profile-name" });
+
+        const loadBtn = row.createEl("button", { text: "Load", cls: "glt-sidebar-btn" });
+        loadBtn.addEventListener("click", async () => {
+          await this.loadProfile(profile);
+        });
+
+        const deleteBtn = row.createEl("button", { text: "×", cls: "glt-group-delete-btn" });
+        deleteBtn.addEventListener("click", async () => {
+          this.settings.profiles.splice(i, 1);
+          await this.saveSettings();
+          renderProfiles();
+        });
+      }
+    };
+
+    renderProfiles();
+  }
+
+  private async loadProfile(profile: SettingsProfile): Promise<void> {
+    const snapshot = profile.snapshot;
+
+    // Apply SETTING_DEFS values
+    for (const def of SETTING_DEFS) {
+      if (snapshot[def.key] !== undefined) {
+        (this.settings as any)[def.key] = snapshot[def.key];
+      }
+    }
+
+    // Apply other values
+    if (snapshot.showUntyped !== undefined) this.settings.showUntyped = snapshot.showUntyped;
+    if (snapshot.nodeColor !== undefined) this.settings.nodeColor = snapshot.nodeColor;
+    if (snapshot.nodeColorHover !== undefined) this.settings.nodeColorHover = snapshot.nodeColorHover;
+    if (snapshot.nodeGroups !== undefined) {
+      this.settings.nodeGroups = JSON.parse(JSON.stringify(snapshot.nodeGroups));
+    }
+
+    // Apply link type visibility (preserve colors)
+    if (snapshot.linkTypeVisibility) {
+      for (const [type, visible] of Object.entries(snapshot.linkTypeVisibility)) {
+        if (this.settings.linkTypes[type]) {
+          this.settings.linkTypes[type].visible = visible as boolean;
+        }
+      }
+    }
+
+    await this.saveSettings();
+    await this.rebuildGraph();
+  }
+
   private initRenderer(): void {
     if (!this.canvasContainerEl) return;
-    // Detach toggle button before emptying so it's not destroyed
-    const toggleBtn = this.toggleBtnEl;
-    if (toggleBtn) toggleBtn.remove();
     this.canvasContainerEl.empty();
 
     if (this.currentMode === "2d") {
@@ -404,8 +499,6 @@ export class GraphLinkTypesView extends ItemView {
         this.settings
       );
     }
-    // Re-append toggle button after renderer creates its elements
-    if (toggleBtn) this.canvasContainerEl.appendChild(toggleBtn);
   }
 
   private pushDataToRenderer(): void {
