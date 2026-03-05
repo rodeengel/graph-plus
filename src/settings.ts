@@ -1,7 +1,6 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type GraphLinkTypesPlugin from "./main";
-import type { GraphLinkTypesSettings, LinkTypeConfig } from "./types";
-import { COLOR_PALETTE, UNTYPED_LINK_KEY } from "./types";
+import { COLOR_PALETTE, UNTYPED_LINK_KEY, SETTING_DEFS } from "./types";
 
 export class GraphLinkTypesSettingTab extends PluginSettingTab {
   plugin: GraphLinkTypesPlugin;
@@ -17,7 +16,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
 
     containerEl.createEl("h2", { text: "Graph Link Types" });
 
-    // --- General settings ---
+    // --- General (manual — unique control types) ---
     new Setting(containerEl)
       .setName("Default mode")
       .setDesc("Default rendering mode when opening the graph view")
@@ -28,30 +27,6 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.defaultMode)
           .onChange(async (value) => {
             this.plugin.settings.defaultMode = value as "2d" | "3d";
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Show edge labels")
-      .setDesc("Display link type names on edges")
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.showLabels)
-          .onChange(async (value) => {
-            this.plugin.settings.showLabels = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Show node labels")
-      .setDesc("Display node names when zoomed in (past text fade threshold)")
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.showNodeLabels)
-          .onChange(async (value) => {
-            this.plugin.settings.showNodeLabels = value;
             await this.plugin.saveSettings();
           })
       );
@@ -68,47 +43,11 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           })
       );
 
-    // --- Display settings ---
+    // --- Schema-driven sections ---
     containerEl.createEl("h3", { text: "Display" });
+    this.renderSettingsSection(containerEl, "display");
 
-    new Setting(containerEl)
-      .setName("Show arrows")
-      .setDesc("Draw directional arrowheads on links")
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.showArrows)
-          .onChange(async (value) => {
-            this.plugin.settings.showArrows = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Scale nodes by connections")
-      .setDesc("Make nodes with more links appear larger")
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.scaleNodeByLinks)
-          .onChange(async (value) => {
-            this.plugin.settings.scaleNodeByLinks = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Link thickness")
-      .setDesc("Width of graph edges (0.5 - 5)")
-      .addSlider((slider) =>
-        slider
-          .setLimits(0.5, 5, 0.5)
-          .setValue(this.plugin.settings.linkThickness)
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            this.plugin.settings.linkThickness = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
+    // Color pickers (manual — not in sidebar)
     new Setting(containerEl)
       .setName("Node color")
       .setDesc("Default color for graph nodes")
@@ -133,221 +72,19 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           })
       );
 
-    // --- 2D Display ---
     containerEl.createEl("h3", { text: "2D Display" });
+    this.renderSettingsSection(containerEl, "display2d");
 
-    new Setting(containerEl)
-      .setName("Node label zoom")
-      .setDesc("Zoom level at which node labels appear (0.1 - 5)")
-      .addSlider((slider) =>
-        slider
-          .setLimits(0.1, 5, 0.1)
-          .setValue(this.plugin.settings.textFadeThreshold)
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            this.plugin.settings.textFadeThreshold = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Edge label zoom")
-      .setDesc("Zoom level at which edge labels appear (0.1 - 5)")
-      .addSlider((slider) =>
-        slider
-          .setLimits(0.1, 5, 0.1)
-          .setValue(this.plugin.settings.edgeLabelThreshold)
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            this.plugin.settings.edgeLabelThreshold = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    // --- 3D Display ---
     containerEl.createEl("h3", { text: "3D Display" });
+    this.renderSettingsSection(containerEl, "display3d");
 
-    new Setting(containerEl)
-      .setName("Node scale")
-      .setDesc("Size of 3D node spheres (1 - 20)")
-      .addSlider((slider) =>
-        slider
-          .setLimits(1, 20, 1)
-          .setValue(this.plugin.settings.nodeRelSize3D)
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            this.plugin.settings.nodeRelSize3D = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Node opacity")
-      .setDesc("Opacity of 3D nodes (0 - 1)")
-      .addSlider((slider) =>
-        slider
-          .setLimits(0, 1, 0.05)
-          .setValue(this.plugin.settings.nodeOpacity3D)
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            this.plugin.settings.nodeOpacity3D = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Link opacity")
-      .setDesc("Opacity of 3D links (0 - 1)")
-      .addSlider((slider) =>
-        slider
-          .setLimits(0, 1, 0.05)
-          .setValue(this.plugin.settings.linkOpacity)
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            this.plugin.settings.linkOpacity = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    // --- Filters ---
     containerEl.createEl("h3", { text: "Filters" });
+    this.renderSettingsSection(containerEl, "filters");
 
-    new Setting(containerEl)
-      .setName("Show attachments")
-      .setDesc("Include attachment files (images, PDFs, etc.)")
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.showAttachments)
-          .onChange(async (value) => {
-            this.plugin.settings.showAttachments = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Existing files only")
-      .setDesc("Hide nodes for unresolved/non-existent files")
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.existingOnly)
-          .onChange(async (value) => {
-            this.plugin.settings.existingOnly = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Show orphans")
-      .setDesc("Show nodes without any visible links")
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.showOrphans)
-          .onChange(async (value) => {
-            this.plugin.settings.showOrphans = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    // --- Physics settings ---
     containerEl.createEl("h3", { text: "Physics" });
+    this.renderSettingsSection(containerEl, "forces");
 
-    new Setting(containerEl)
-      .setName("Node size")
-      .setDesc("Base radius of graph nodes (1-20)")
-      .addSlider((slider) =>
-        slider
-          .setLimits(1, 20, 1)
-          .setValue(this.plugin.settings.nodeSize)
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            this.plugin.settings.nodeSize = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Center force")
-      .setDesc("Pull nodes toward center (0-2)")
-      .addSlider((slider) =>
-        slider
-          .setLimits(0, 2, 0.05)
-          .setValue(this.plugin.settings.centerForce)
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            this.plugin.settings.centerForce = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Repel force")
-      .setDesc("Push nodes apart (10-2000, higher = more spread)")
-      .addSlider((slider) =>
-        slider
-          .setLimits(10, 2000, 10)
-          .setValue(Math.abs(this.plugin.settings.chargeStrength))
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            this.plugin.settings.chargeStrength = -value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Link force")
-      .setDesc("Strength of link attraction (0-2)")
-      .addSlider((slider) =>
-        slider
-          .setLimits(0, 2, 0.05)
-          .setValue(this.plugin.settings.linkStrength)
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            this.plugin.settings.linkStrength = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Link distance")
-      .setDesc("Preferred distance between linked nodes (5-500)")
-      .addSlider((slider) =>
-        slider
-          .setLimits(5, 500, 5)
-          .setValue(this.plugin.settings.linkDistance)
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            this.plugin.settings.linkDistance = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Collision force")
-      .setDesc("Prevent node overlap (0-1)")
-      .addSlider((slider) =>
-        slider
-          .setLimits(0, 1, 0.05)
-          .setValue(this.plugin.settings.collisionForce)
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            this.plugin.settings.collisionForce = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Pause physics")
-      .setDesc("Freeze the force simulation")
-      .addToggle((toggle) =>
-        toggle
-          .setValue(!this.plugin.settings.animate)
-          .onChange(async (value) => {
-            this.plugin.settings.animate = !value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    // --- Node Groups ---
+    // --- Node Groups (manual — complex editor) ---
     containerEl.createEl("h3", { text: "Node Groups" });
     containerEl.createEl("p", {
       text: "Color nodes by query. Supports: path:prefix, file:name, tag:#name, [property:value], bare substring. First match wins.",
@@ -357,7 +94,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
     const groupContainer = containerEl.createDiv();
     this.renderGroupSettings(groupContainer);
 
-    // --- Link type colors ---
+    // --- Link type colors (manual — dynamic from data) ---
     containerEl.createEl("h3", { text: "Link Type Colors" });
 
     const types = Object.keys(this.plugin.settings.linkTypes).sort((a, b) => {
@@ -397,7 +134,6 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
         );
     }
 
-    // Reset button
     new Setting(containerEl).addButton((button) =>
       button
         .setButtonText("Reset colors to defaults")
@@ -412,6 +148,40 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           this.display();
         })
     );
+  }
+
+  /** Render all settings for a section from the declarative schema */
+  private renderSettingsSection(containerEl: HTMLElement, section: string): void {
+    const defs = SETTING_DEFS.filter((d) => d.section === section);
+    for (const def of defs) {
+      if (def.type === "toggle") {
+        const raw = this.plugin.settings[def.key] as boolean;
+        new Setting(containerEl)
+          .setName(def.label)
+          .setDesc(def.desc ?? "")
+          .addToggle((toggle) =>
+            toggle.setValue(def.invert ? !raw : raw).onChange(async (value) => {
+              (this.plugin.settings as any)[def.key] = def.invert ? !value : value;
+              await this.plugin.saveSettings();
+            })
+          );
+      } else if (def.type === "slider") {
+        const raw = this.plugin.settings[def.key] as number;
+        new Setting(containerEl)
+          .setName(def.label)
+          .setDesc(def.desc ?? "")
+          .addSlider((slider) =>
+            slider
+              .setLimits(def.min!, def.max!, def.step!)
+              .setValue(def.invert ? Math.abs(raw) : raw)
+              .setDynamicTooltip()
+              .onChange(async (value) => {
+                (this.plugin.settings as any)[def.key] = def.invert ? -value : value;
+                await this.plugin.saveSettings();
+              })
+          );
+      }
+    }
   }
 
   private renderGroupSettings(container: HTMLElement): void {

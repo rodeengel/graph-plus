@@ -1,6 +1,6 @@
 import { ItemView, WorkspaceLeaf } from "obsidian";
-import type { GraphLinkTypesSettings, GraphData, NodeGroup } from "./types";
-import { UNTYPED_LINK_KEY } from "./types";
+import type { GraphLinkTypesSettings, GraphData, NodeGroup, SettingDef } from "./types";
+import { UNTYPED_LINK_KEY, SETTING_DEFS } from "./types";
 import { buildGraphData, filterGraphData, countLinkTypes } from "./linkParser";
 import { GraphRenderer2D } from "./graphRenderer2D";
 import { GraphRenderer3D } from "./graphRenderer3D";
@@ -159,7 +159,7 @@ export class GraphLinkTypesView extends ItemView {
       if (this.renderer3D) this.renderer3D.resetCamera();
     });
 
-    // --- Search box (supports Obsidian query syntax) ---
+    // --- Search box ---
     const searchInput = panel.createEl("input", {
       type: "text",
       placeholder: "Search... (path:, file:, tag:, [prop:val])",
@@ -171,27 +171,76 @@ export class GraphLinkTypesView extends ItemView {
       this.pushDataToRenderer();
     });
 
-    // --- Filters (collapsible) ---
+    // --- Schema-driven sections ---
     const filtersContent = this.createCollapsibleSection(panel, "Filters", true);
-    this.buildToggle(filtersContent, "Attachments", this.settings.showAttachments, async (val) => {
-      this.settings.showAttachments = val;
-      await this.saveSettings();
-      this.pushDataToRenderer();
-    });
-    this.buildToggle(filtersContent, "Existing only", this.settings.existingOnly, async (val) => {
-      this.settings.existingOnly = val;
-      await this.saveSettings();
-      this.pushDataToRenderer();
-    });
-    this.buildToggle(filtersContent, "Orphans", this.settings.showOrphans, async (val) => {
-      this.settings.showOrphans = val;
-      await this.saveSettings();
-      this.pushDataToRenderer();
-    });
+    this.renderSettingsSection(filtersContent, "filters");
 
-    // --- Link Types (collapsible) ---
+    // --- Link Types (manual — dynamic from data) ---
+    this.buildLinkTypesSection(panel);
+
+    const displayContent = this.createCollapsibleSection(panel, "Display", false);
+    this.renderSettingsSection(displayContent, "display");
+
+    const display2DContent = this.createCollapsibleSection(panel, "2D Display", false);
+    this.renderSettingsSection(display2DContent, "display2d");
+
+    const display3DContent = this.createCollapsibleSection(panel, "3D Display", false);
+    this.renderSettingsSection(display3DContent, "display3d");
+
+    const forcesContent = this.createCollapsibleSection(panel, "Forces", false);
+    this.renderSettingsSection(forcesContent, "forces");
+
+    // --- Groups (manual — complex editor) ---
+    const groupsContent = this.createCollapsibleSection(panel, "Groups", false);
+    this.buildGroupEditor(groupsContent);
+  }
+
+  /** Render all settings for a section from the declarative schema */
+  private renderSettingsSection(parent: HTMLElement, section: string): void {
+    const defs = SETTING_DEFS.filter((d) => d.section === section);
+    for (const def of defs) {
+      if (def.type === "toggle") {
+        const raw = this.settings[def.key] as boolean;
+        this.buildToggle(parent, def.label, def.invert ? !raw : raw, async (val) => {
+          (this.settings as any)[def.key] = def.invert ? !val : val;
+          await this.saveSettings();
+          this.applySettingEffect(def);
+        });
+      } else if (def.type === "slider") {
+        const raw = this.settings[def.key] as number;
+        this.buildSlider(parent, def.label, def.invert ? Math.abs(raw) : raw, def.min!, def.max!, def.step!, async (val) => {
+          (this.settings as any)[def.key] = def.invert ? -val : val;
+          await this.saveSettings();
+          this.applySettingEffect(def);
+        });
+      }
+    }
+  }
+
+  /** Apply the appropriate renderer update for a setting change */
+  private applySettingEffect(def: SettingDef): void {
+    const r = def.renderers ?? "both";
+    switch (def.effect) {
+      case "rebuild":
+        this.pushDataToRenderer();
+        break;
+      case "visual":
+        if ((r === "both" || r === "2d") && this.renderer2D) this.renderer2D.updateSettings();
+        if ((r === "both" || r === "3d") && this.renderer3D) this.renderer3D.updateSettings();
+        break;
+      case "force":
+        if (this.renderer2D) this.renderer2D.updateSettings();
+        if (this.renderer3D) this.renderer3D.updateForces();
+        break;
+      case "animate":
+        if (this.renderer2D) this.renderer2D.setAnimate(this.settings.animate);
+        break;
+    }
+  }
+
+  /** Build the Link Types collapsible section (dynamic, not schema-driven) */
+  private buildLinkTypesSection(panel: HTMLElement): void {
     const linkTypesContent = this.createCollapsibleSection(panel, "Link Types", true);
-
     const counts = countLinkTypes(this.fullData);
 
     const types = Object.keys(this.settings.linkTypes).sort((a, b) => {
@@ -236,134 +285,6 @@ export class GraphLinkTypesView extends ItemView {
 
       row.createEl("span", { text: `(${count})`, cls: "glt-link-count" });
     }
-
-    // --- Display (shared, collapsible) ---
-    const displayContent = this.createCollapsibleSection(panel, "Display", false);
-
-    this.buildToggle(displayContent, "Arrows", this.settings.showArrows, async (val) => {
-      this.settings.showArrows = val;
-      await this.saveSettings();
-      if (this.renderer2D) this.renderer2D.updateSettings();
-      if (this.renderer3D) this.renderer3D.updateSettings();
-    });
-
-    this.buildToggle(displayContent, "Scale by connections", this.settings.scaleNodeByLinks, async (val) => {
-      this.settings.scaleNodeByLinks = val;
-      await this.saveSettings();
-      if (this.renderer2D) this.renderer2D.updateSettings();
-      if (this.renderer3D) this.renderer3D.updateSettings();
-    });
-
-    this.buildSlider(displayContent, "Node size", this.settings.nodeSize, 1, 20, 1, async (val) => {
-      this.settings.nodeSize = val;
-      await this.saveSettings();
-      if (this.renderer2D) this.renderer2D.updateSettings();
-      if (this.renderer3D) this.renderer3D.updateSettings();
-    });
-
-    this.buildSlider(displayContent, "Link thickness", this.settings.linkThickness, 0.5, 5, 0.5, async (val) => {
-      this.settings.linkThickness = val;
-      await this.saveSettings();
-      if (this.renderer2D) this.renderer2D.updateSettings();
-      if (this.renderer3D) this.renderer3D.updateSettings();
-    });
-
-    // --- 2D Display (collapsible) ---
-    const display2DContent = this.createCollapsibleSection(panel, "2D Display", false);
-
-    this.buildToggle(display2DContent, "Edge labels", this.settings.showLabels, async (val) => {
-      this.settings.showLabels = val;
-      await this.saveSettings();
-      if (this.renderer2D) this.renderer2D.updateSettings();
-    });
-
-    this.buildToggle(display2DContent, "Node labels", this.settings.showNodeLabels, async (val) => {
-      this.settings.showNodeLabels = val;
-      await this.saveSettings();
-      if (this.renderer2D) this.renderer2D.updateSettings();
-    });
-
-    this.buildSlider(display2DContent, "Node label zoom", this.settings.textFadeThreshold, 0.1, 5, 0.1, async (val) => {
-      this.settings.textFadeThreshold = val;
-      await this.saveSettings();
-      if (this.renderer2D) this.renderer2D.updateSettings();
-    });
-
-    this.buildSlider(display2DContent, "Edge label zoom", this.settings.edgeLabelThreshold, 0.1, 5, 0.1, async (val) => {
-      this.settings.edgeLabelThreshold = val;
-      await this.saveSettings();
-      if (this.renderer2D) this.renderer2D.updateSettings();
-    });
-
-    // --- 3D Display (collapsible) ---
-    const display3DContent = this.createCollapsibleSection(panel, "3D Display", false);
-
-    this.buildSlider(display3DContent, "Node scale", this.settings.nodeRelSize3D, 1, 20, 1, async (val) => {
-      this.settings.nodeRelSize3D = val;
-      await this.saveSettings();
-      if (this.renderer3D) this.renderer3D.updateSettings();
-    });
-
-    this.buildSlider(display3DContent, "Node opacity", this.settings.nodeOpacity3D, 0, 1, 0.05, async (val) => {
-      this.settings.nodeOpacity3D = val;
-      await this.saveSettings();
-      if (this.renderer3D) this.renderer3D.updateSettings();
-    });
-
-    this.buildSlider(display3DContent, "Link opacity", this.settings.linkOpacity, 0, 1, 0.05, async (val) => {
-      this.settings.linkOpacity = val;
-      await this.saveSettings();
-      if (this.renderer3D) this.renderer3D.updateSettings();
-    });
-
-    // --- Forces (collapsible) ---
-    const forcesContent = this.createCollapsibleSection(panel, "Forces", false);
-
-    this.buildSlider(forcesContent, "Center force", this.settings.centerForce, 0, 2, 0.05, async (val) => {
-      this.settings.centerForce = val;
-      await this.saveSettings();
-      if (this.renderer2D) this.renderer2D.updateSettings();
-      if (this.renderer3D) this.renderer3D.updateForces();
-    });
-
-    // Repel force: display as positive, store as negative internally
-    this.buildSlider(forcesContent, "Repel force", Math.abs(this.settings.chargeStrength), 10, 2000, 10, async (val) => {
-      this.settings.chargeStrength = -val;
-      await this.saveSettings();
-      if (this.renderer2D) this.renderer2D.updateSettings();
-      if (this.renderer3D) this.renderer3D.updateForces();
-    });
-
-    this.buildSlider(forcesContent, "Link force", this.settings.linkStrength, 0, 2, 0.05, async (val) => {
-      this.settings.linkStrength = val;
-      await this.saveSettings();
-      if (this.renderer2D) this.renderer2D.updateSettings();
-      if (this.renderer3D) this.renderer3D.updateForces();
-    });
-
-    this.buildSlider(forcesContent, "Link distance", this.settings.linkDistance, 5, 500, 5, async (val) => {
-      this.settings.linkDistance = val;
-      await this.saveSettings();
-      if (this.renderer2D) this.renderer2D.updateSettings();
-      if (this.renderer3D) this.renderer3D.updateForces();
-    });
-
-    this.buildSlider(forcesContent, "Collision", this.settings.collisionForce, 0, 1, 0.05, async (val) => {
-      this.settings.collisionForce = val;
-      await this.saveSettings();
-      if (this.renderer2D) this.renderer2D.updateSettings();
-      if (this.renderer3D) this.renderer3D.updateForces();
-    });
-
-    this.buildToggle(forcesContent, "Pause physics", !this.settings.animate, async (val) => {
-      this.settings.animate = !val;
-      await this.saveSettings();
-      if (this.renderer2D) this.renderer2D.setAnimate(!val);
-    });
-
-    // --- Groups (collapsible) ---
-    const groupsContent = this.createCollapsibleSection(panel, "Groups", false);
-    this.buildGroupEditor(groupsContent);
   }
 
   private buildToggle(
