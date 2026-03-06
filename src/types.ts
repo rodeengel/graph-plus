@@ -93,6 +93,7 @@ export interface GraphLinkTypesSettings {
   nodeColorHover: string;
   scaleNodeByLinks: boolean;
   profiles: SettingsProfile[];
+  searchQuery: string;
 }
 
 export const DEFAULT_SETTINGS: GraphLinkTypesSettings = {
@@ -123,6 +124,7 @@ export const DEFAULT_SETTINGS: GraphLinkTypesSettings = {
   nodeColorHover: "#7b6cd9",
   scaleNodeByLinks: false,
   profiles: [],
+  searchQuery: "",
 };
 
 // --- Declarative settings schema ---

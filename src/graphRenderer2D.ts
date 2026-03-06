@@ -403,20 +403,23 @@ export class GraphRenderer2D {
 
       ctx.globalAlpha = alpha;
 
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
+
       if (!node.exists) {
         // Non-existent nodes: dashed stroke outline
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
         ctx.setLineDash([3, 3]);
         ctx.strokeStyle = fillColor;
         ctx.lineWidth = 1.5;
         ctx.stroke();
         ctx.setLineDash([]);
       } else {
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
         ctx.fillStyle = fillColor;
         ctx.fill();
+        // Outline
+        ctx.strokeStyle = this.resolvedBgColor;
+        ctx.lineWidth = 2;
+        ctx.stroke();
       }
 
       // Node label: always on hover; when showNodeLabels is on, also at zoom > threshold

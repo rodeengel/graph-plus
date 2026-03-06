@@ -108,10 +108,23 @@
   white-space: nowrap;
 }
 
+.glt-force-rule-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+}
+
+.glt-force-rule-label {
+  flex-shrink: 0;
+  font-size: 0.85em;
+  min-width: 50px;
+}
+
 .glt-force-rule-input {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 2px 6px;
-  margin: 0 0 4px 0;
   border: 1px solid var(--background-modifier-border);
   border-radius: 3px;
   background: var(--background-primary);

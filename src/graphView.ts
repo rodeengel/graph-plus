@@ -17,7 +17,6 @@ export class GraphLinkTypesView extends ItemView {
   private filterPanelEl: HTMLElement | null = null;
   private canvasContainerEl: HTMLElement | null = null;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  private searchQuery: string = "";
   private sidebarVisible: boolean = true;
   private modeBtnEl: HTMLElement | null = null;
   private toggleBtnEl: HTMLElement | null = null;
@@ -165,9 +164,10 @@ export class GraphLinkTypesView extends ItemView {
       placeholder: "Search... (path:, file:, tag:, [prop:val])",
       cls: "glt-search-input",
     });
-    searchInput.value = this.searchQuery;
-    searchInput.addEventListener("input", () => {
-      this.searchQuery = searchInput.value;
+    searchInput.value = this.settings.searchQuery;
+    searchInput.addEventListener("input", async () => {
+      this.settings.searchQuery = searchInput.value;
+      await this.saveSettings();
       this.pushDataToRenderer();
     });
 
@@ -189,6 +189,9 @@ export class GraphLinkTypesView extends ItemView {
 
     const forcesContent = this.createCollapsibleSection(panel, "Forces", false);
     this.renderSettingsSection(forcesContent, "forces");
+
+    // --- Link Forces ---
+    this.buildLinkForcesSection(panel);
 
     // --- Groups (manual — complex editor) ---
     const groupsContent = this.createCollapsibleSection(panel, "Groups", false);
@@ -288,11 +291,35 @@ export class GraphLinkTypesView extends ItemView {
       });
 
       row.createEl("span", { text: `(${count})`, cls: "glt-link-count" });
+    }
+  }
 
-      // Force rule input
-      const forceInput = linkTypesContent.createEl("input", {
+  /** Build the Link Forces collapsible section */
+  private buildLinkForcesSection(panel: HTMLElement): void {
+    const content = this.createCollapsibleSection(panel, "Link Forces", false);
+
+    const help = content.createEl("div", { cls: "glt-group-help" });
+    help.createEl("div", { text: "up/down:N" });
+    help.createEl("div", { text: "left/right:N" });
+    help.createEl("div", { text: "forward/backward:N" });
+    help.createEl("div", { text: "distance:Nx" });
+
+    const types = Object.keys(this.settings.linkTypes).sort((a, b) => {
+      if (a === UNTYPED_LINK_KEY) return 1;
+      if (b === UNTYPED_LINK_KEY) return -1;
+      return a.localeCompare(b);
+    });
+
+    for (const type of types) {
+      const config = this.settings.linkTypes[type];
+      const displayName = type === UNTYPED_LINK_KEY ? "untyped" : type;
+
+      const row = content.createDiv({ cls: "glt-force-rule-row" });
+      row.createEl("span", { text: displayName, cls: "glt-force-rule-label" });
+
+      const forceInput = row.createEl("input", {
         type: "text",
-        placeholder: "e.g. down:0.5 distance:2x",
+        placeholder: "e.g. down:1 distance:2x",
         cls: "glt-force-rule-input",
       });
       forceInput.value = config.forceRule || "";
@@ -435,7 +462,7 @@ export class GraphLinkTypesView extends ItemView {
           ltv[type] = config.visible;
         }
         snapshot.linkTypeVisibility = ltv;
-        snapshot.searchQuery = this.searchQuery;
+        snapshot.searchQuery = this.settings.searchQuery;
 
         this.settings.profiles.push({ name, snapshot });
         await this.saveSettings();
@@ -485,7 +512,7 @@ export class GraphLinkTypesView extends ItemView {
     }
 
     // Apply search query
-    if (snapshot.searchQuery !== undefined) this.searchQuery = snapshot.searchQuery;
+    if (snapshot.searchQuery !== undefined) this.settings.searchQuery = snapshot.searchQuery;
 
     // Apply link type visibility (preserve colors)
     if (snapshot.linkTypeVisibility) {
@@ -520,7 +547,7 @@ export class GraphLinkTypesView extends ItemView {
   }
 
   private pushDataToRenderer(): void {
-    const filtered = filterGraphData(this.fullData, this.settings, this.searchQuery);
+    const filtered = filterGraphData(this.fullData, this.settings, this.settings.searchQuery);
     if (this.renderer2D) {
       this.renderer2D.updateData(filtered);
     }

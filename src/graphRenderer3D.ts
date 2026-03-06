@@ -275,8 +275,8 @@ export class GraphRenderer3D {
           if (rule.type !== "direction") continue;
           const str = rule.value * 50 * alpha;
           switch (rule.dir) {
-            case "down": target.vy = (target.vy || 0) + str; break;
-            case "up": target.vy = (target.vy || 0) - str; break;
+            case "down": target.vy = (target.vy || 0) - str; break;
+            case "up": target.vy = (target.vy || 0) + str; break;
             case "right": target.vx = (target.vx || 0) + str; break;
             case "left": target.vx = (target.vx || 0) - str; break;
             case "forward": target.vz = (target.vz || 0) - str; break;
