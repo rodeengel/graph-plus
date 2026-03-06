@@ -288,6 +288,20 @@ export class GraphLinkTypesView extends ItemView {
       });
 
       row.createEl("span", { text: `(${count})`, cls: "glt-link-count" });
+
+      // Force rule input
+      const forceInput = linkTypesContent.createEl("input", {
+        type: "text",
+        placeholder: "e.g. down:0.5 distance:2x",
+        cls: "glt-force-rule-input",
+      });
+      forceInput.value = config.forceRule || "";
+      forceInput.addEventListener("change", async () => {
+        config.forceRule = forceInput.value.trim() || undefined;
+        await this.saveSettings();
+        if (this.renderer2D) this.renderer2D.updateForces();
+        if (this.renderer3D) this.renderer3D.updateForces();
+      });
     }
   }
 

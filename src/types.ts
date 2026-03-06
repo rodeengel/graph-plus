@@ -26,6 +26,33 @@ export interface GraphData {
 export interface LinkTypeConfig {
   color: string;
   visible: boolean;
+  forceRule?: string;
+}
+
+export interface ForceRule {
+  type: "direction" | "distance";
+  dir?: "up" | "down" | "left" | "right" | "forward" | "backward";
+  value: number;
+}
+
+export function parseForceRules(rule: string): ForceRule[] {
+  if (!rule) return [];
+  const rules: ForceRule[] = [];
+  for (const part of rule.trim().split(/\s+/)) {
+    const colonIdx = part.indexOf(":");
+    if (colonIdx < 0) continue;
+    const key = part.slice(0, colonIdx).toLowerCase();
+    const rawVal = part.slice(colonIdx + 1);
+
+    if (["up", "down", "left", "right", "forward", "backward"].includes(key)) {
+      const num = parseFloat(rawVal);
+      if (!isNaN(num)) rules.push({ type: "direction", dir: key as ForceRule["dir"], value: num });
+    } else if (key === "distance") {
+      const num = parseFloat(rawVal.replace(/x$/i, ""));
+      if (!isNaN(num) && num > 0) rules.push({ type: "distance", value: num });
+    }
+  }
+  return rules;
 }
 
 export interface NodeGroup {

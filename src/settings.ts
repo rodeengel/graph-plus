@@ -131,6 +131,15 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
               }
               await this.plugin.saveSettings();
             })
+        )
+        .addText((text) =>
+          text
+            .setPlaceholder("e.g. down:0.5 distance:2x")
+            .setValue(config.forceRule || "")
+            .onChange(async (value) => {
+              config.forceRule = value.trim() || undefined;
+              await this.plugin.saveSettings();
+            })
         );
     }
 

@@ -1,6 +1,6 @@
 import type { App } from "obsidian";
 import type { GraphNode, GraphLink, GraphData, GraphLinkTypesSettings } from "./types";
-import { UNTYPED_LINK_KEY } from "./types";
+import { UNTYPED_LINK_KEY, parseForceRules } from "./types";
 import { forceX, forceY } from "d3-force";
 // @ts-ignore — d3-force-3d is a transitive dep of 3d-force-graph
 import { forceZ } from "d3-force-3d";
@@ -149,9 +149,12 @@ export class GraphRenderer3D {
 
       const linkForce = this.graph.d3Force("link");
       if (linkForce) {
-        linkForce.distance(this.settings.linkDistance);
+        linkForce.distance((l: any) => this.getLinkDistance(l));
         linkForce.strength(this.settings.linkStrength);
       }
+
+      // Custom link-type directional forces
+      this.graph.d3Force("linkType", this.createLinkTypeForce());
 
       // Apply pending data if updateData was called before graph was ready
       if (this.pendingData) {
@@ -229,7 +232,7 @@ export class GraphRenderer3D {
 
     const linkForce = this.graph.d3Force("link");
     if (linkForce) {
-      linkForce.distance(this.settings.linkDistance);
+      linkForce.distance((l: any) => this.getLinkDistance(l));
       linkForce.strength(this.settings.linkStrength);
     }
 
@@ -240,6 +243,48 @@ export class GraphRenderer3D {
   resetCamera(): void {
     if (!this.graph) return;
     this.graph.zoomToFit(400);
+  }
+
+  private getLinkDistance(link: any): number {
+    const config = this.settings.linkTypes[link.type];
+    if (config?.forceRule) {
+      const rules = parseForceRules(config.forceRule);
+      const distRule = rules.find((r) => r.type === "distance");
+      if (distRule) return this.settings.linkDistance * distRule.value;
+    }
+    return this.settings.linkDistance;
+  }
+
+  private createLinkTypeForce(): (alpha: number) => void {
+    return (alpha: number) => {
+      if (!this.graph) return;
+      const linkForce = this.graph.d3Force("link");
+      if (!linkForce) return;
+      const links = linkForce.links();
+
+      for (const link of links) {
+        const source = link.source;
+        const target = link.target;
+        if (!source || !target) continue;
+
+        const config = this.settings.linkTypes[link.type];
+        if (!config?.forceRule) continue;
+
+        const rules = parseForceRules(config.forceRule);
+        for (const rule of rules) {
+          if (rule.type !== "direction") continue;
+          const str = rule.value * 50 * alpha;
+          switch (rule.dir) {
+            case "down": target.vy = (target.vy || 0) + str; break;
+            case "up": target.vy = (target.vy || 0) - str; break;
+            case "right": target.vx = (target.vx || 0) + str; break;
+            case "left": target.vx = (target.vx || 0) - str; break;
+            case "forward": target.vz = (target.vz || 0) - str; break;
+            case "backward": target.vz = (target.vz || 0) + str; break;
+          }
+        }
+      }
+    };
   }
 
   destroy(): void {

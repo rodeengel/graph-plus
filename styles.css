@@ -108,6 +108,22 @@
   white-space: nowrap;
 }
 
+.glt-force-rule-input {
+  width: 100%;
+  padding: 2px 6px;
+  margin: 0 0 4px 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 3px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 0.78em;
+  box-sizing: border-box;
+}
+
+.glt-force-rule-input::placeholder {
+  color: var(--text-faint);
+}
+
 .glt-color-swatch {
   width: 14px;
   height: 14px;

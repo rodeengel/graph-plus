@@ -12,7 +12,7 @@ import { zoom, zoomIdentity, type ZoomBehavior, type D3ZoomEvent } from "d3-zoom
 import { drag, type D3DragEvent } from "d3-drag";
 import type { App } from "obsidian";
 import type { GraphNode, GraphLink, GraphData, GraphLinkTypesSettings } from "./types";
-import { UNTYPED_LINK_KEY } from "./types";
+import { UNTYPED_LINK_KEY, parseForceRules } from "./types";
 
 export class GraphRenderer2D {
   private container: HTMLElement;
@@ -39,6 +39,7 @@ export class GraphRenderer2D {
 
   // Resolved CSS fallback colors
   private resolvedTextColor: string;
+  private resolvedBgColor: string;
 
   constructor(container: HTMLElement, app: App, settings: GraphLinkTypesSettings) {
     this.container = container;
@@ -48,6 +49,7 @@ export class GraphRenderer2D {
     // Resolve CSS variables at construction time for Canvas compatibility
     const cs = getComputedStyle(container);
     this.resolvedTextColor = cs.getPropertyValue("--text-normal").trim() || "#ddd";
+    this.resolvedBgColor = cs.getPropertyValue("--background-primary").trim() || "#1e1e1e";
 
     // Create canvas
     this.canvas = document.createElement("canvas");
@@ -70,6 +72,7 @@ export class GraphRenderer2D {
       .force("x", forceX(this.width / 2).strength(settings.centerForce * 0.1))
       .force("y", forceY(this.height / 2).strength(settings.centerForce * 0.1))
       .force("collide", forceCollide(settings.nodeSize + 2).strength(settings.collisionForce))
+      .force("linkType", this.createLinkTypeForce())
       .on("tick", () => this.render());
 
     if (!settings.animate) {
@@ -142,7 +145,7 @@ export class GraphRenderer2D {
       "link",
       forceLink<GraphNode, GraphLink>(this.links)
         .id((d) => d.id)
-        .distance(this.settings.linkDistance)
+        .distance((l: any) => this.getLinkDistance(l))
         .strength(this.settings.linkStrength)
     );
     this.simulation.alpha(1).restart();
@@ -171,7 +174,7 @@ export class GraphRenderer2D {
 
     const link = this.simulation.force("link") as any;
     if (link) {
-      link.distance(this.settings.linkDistance);
+      link.distance((l: any) => this.getLinkDistance(l));
       link.strength(this.settings.linkStrength);
     }
 
@@ -343,10 +346,15 @@ export class GraphRenderer2D {
         if (showLabels && link.type !== UNTYPED_LINK_KEY && t.k > this.settings.edgeLabelThreshold) {
           const labelX = (sx + 2 * cpx + tx) / 4;
           const labelY = (sy + 2 * cpy + ty) / 4;
-          ctx.font = `${10 / Math.max(t.k, 0.5)}px sans-serif`;
-          ctx.fillStyle = color;
+          const fs = 1 / Math.max(t.k, 0.5);
+          ctx.font = `${16 * fs}px sans-serif`;
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
+          ctx.lineJoin = "round";
+          ctx.lineWidth = 3 * fs;
+          ctx.strokeStyle = this.resolvedBgColor;
+          ctx.strokeText(link.type, labelX, labelY - 4);
+          ctx.fillStyle = color;
           ctx.fillText(link.type, labelX, labelY - 4);
         }
       } else {
@@ -362,10 +370,15 @@ export class GraphRenderer2D {
         if (showLabels && link.type !== UNTYPED_LINK_KEY && t.k > this.settings.edgeLabelThreshold) {
           const lmx = (sx + tx) / 2;
           const lmy = (sy + ty) / 2;
-          ctx.font = `${10 / Math.max(t.k, 0.5)}px sans-serif`;
-          ctx.fillStyle = color;
+          const fs = 1 / Math.max(t.k, 0.5);
+          ctx.font = `${16 * fs}px sans-serif`;
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
+          ctx.lineJoin = "round";
+          ctx.lineWidth = 3 * fs;
+          ctx.strokeStyle = this.resolvedBgColor;
+          ctx.strokeText(link.type, lmx, lmy - 4);
+          ctx.fillStyle = color;
           ctx.fillText(link.type, lmx, lmy - 4);
         }
       }
@@ -409,9 +422,14 @@ export class GraphRenderer2D {
       // Node label: always on hover; when showNodeLabels is on, also at zoom > threshold
       const showLabel = isHovered || (showNodeLabels && t.k > textFadeThreshold);
       if (showLabel && node.name) {
-        ctx.font = `${12 / Math.max(t.k, 0.5)}px sans-serif`;
-        ctx.fillStyle = this.resolvedTextColor;
+        const fs = 1 / Math.max(t.k, 0.5);
+        ctx.font = `${17 * fs}px sans-serif`;
         ctx.textAlign = "center";
+        ctx.lineJoin = "round";
+        ctx.lineWidth = 3 * fs;
+        ctx.strokeStyle = this.resolvedBgColor;
+        ctx.strokeText(node.name, node.x, node.y - radius - 4);
+        ctx.fillStyle = this.resolvedTextColor;
         ctx.fillText(node.name, node.x, node.y - radius - 4);
       }
 
@@ -556,6 +574,42 @@ export class GraphRenderer2D {
       this.contextMenu = null;
     }
   };
+
+  private getLinkDistance(link: any): number {
+    const config = this.settings.linkTypes[link.type];
+    if (config?.forceRule) {
+      const rules = parseForceRules(config.forceRule);
+      const distRule = rules.find((r) => r.type === "distance");
+      if (distRule) return this.settings.linkDistance * distRule.value;
+    }
+    return this.settings.linkDistance;
+  }
+
+  private createLinkTypeForce(): (alpha: number) => void {
+    return (alpha: number) => {
+      for (const link of this.links) {
+        const source = link.source as GraphNode;
+        const target = link.target as GraphNode;
+        if (source.vx == null || target.vx == null) continue;
+
+        const config = this.settings.linkTypes[link.type];
+        if (!config?.forceRule) continue;
+
+        const rules = parseForceRules(config.forceRule);
+        for (const rule of rules) {
+          if (rule.type !== "direction") continue;
+          const str = rule.value * 50 * alpha;
+          switch (rule.dir) {
+            case "down": target.vy! += str; break;
+            case "up": target.vy! -= str; break;
+            case "right": target.vx! += str; break;
+            case "left": target.vx! -= str; break;
+            // forward/backward ignored in 2D
+          }
+        }
+      }
+    };
+  }
 
   destroy(): void {
     this.destroyed = true;
