@@ -95,7 +95,7 @@ Node group queries follow Obsidian conventions:
 
 ### Manual
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/nicolasong/graph-link-types/releases/latest)
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/nicolasong/graph-plus/releases/latest)
 2. Create a folder `graph-plus` in your vault's `.obsidian/plugins/` directory
 3. Copy the downloaded files into that folder
 4. Enable the plugin in Settings → Community Plugins
@@ -105,6 +105,10 @@ Node group queries follow Obsidian conventions:
 1. Open the command palette (`Ctrl/Cmd + P`)
 2. Run **Graph Plus: Open graph view**
 3. The graph view opens as a panel — use the sidebar to configure filters, colors, and forces
+
+## Architecture
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for an overview of the codebase structure.
 
 ## License
 
