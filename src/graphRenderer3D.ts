@@ -1,6 +1,6 @@
 import type { App } from "obsidian";
 import type { GraphNode, GraphLink, GraphData, GraphLinkTypesSettings } from "./types";
-import { UNTYPED_LINK_KEY, parseForceRules } from "./types";
+import { UNTYPED_LINK_KEY, parseForceRules, type ForceRule } from "./types";
 import { forceX, forceY } from "d3-force";
 // @ts-ignore — d3-force-3d is a transitive dep of 3d-force-graph
 import { forceZ } from "d3-force-3d";
@@ -45,6 +45,7 @@ export class GraphRenderer3D {
   private destroyed = false;
   private pendingData: GraphData | null = null;
   private THREE: any = null;
+  private forceRuleCache = new Map<string, ForceRule[]>();
 
   constructor(container: HTMLElement, app: App, settings: GraphLinkTypesSettings) {
     this.container = container;
@@ -180,6 +181,7 @@ export class GraphRenderer3D {
 
   private applyData(data: GraphData): void {
     if (!this.graph) return;
+    this.rebuildForceRuleCache();
 
     const nodes = data.nodes.map((n) => ({
       id: n.id,
@@ -218,6 +220,7 @@ export class GraphRenderer3D {
   /** Update force parameters and reheat the simulation */
   updateForces(): void {
     if (!this.graph) return;
+    this.rebuildForceRuleCache();
 
     const chargeForce = this.graph.d3Force("charge");
     if (chargeForce) chargeForce.strength(this.settings.chargeStrength);
@@ -245,10 +248,18 @@ export class GraphRenderer3D {
     this.graph.zoomToFit(400);
   }
 
+  private rebuildForceRuleCache(): void {
+    this.forceRuleCache.clear();
+    for (const [type, config] of Object.entries(this.settings.linkTypes)) {
+      if (config.forceRule) {
+        this.forceRuleCache.set(type, parseForceRules(config.forceRule));
+      }
+    }
+  }
+
   private getLinkDistance(link: any): number {
-    const config = this.settings.linkTypes[link.type];
-    if (config?.forceRule) {
-      const rules = parseForceRules(config.forceRule);
+    const rules = this.forceRuleCache.get(link.type);
+    if (rules) {
       const distRule = rules.find((r) => r.type === "distance");
       if (distRule) return this.settings.linkDistance * distRule.value;
     }
@@ -267,10 +278,9 @@ export class GraphRenderer3D {
         const target = link.target;
         if (!source || !target) continue;
 
-        const config = this.settings.linkTypes[link.type];
-        if (!config?.forceRule) continue;
+        const rules = this.forceRuleCache.get(link.type);
+        if (!rules) continue;
 
-        const rules = parseForceRules(config.forceRule);
         for (const rule of rules) {
           if (rule.type !== "direction") continue;
           const str = rule.value * 50 * alpha;

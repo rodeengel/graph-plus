@@ -1,5 +1,5 @@
 import { ItemView, WorkspaceLeaf } from "obsidian";
-import type { GraphLinkTypesSettings, GraphData, NodeGroup, SettingDef, SettingsProfile } from "./types";
+import type { GraphLinkTypesSettings, GraphData, SettingDef, SettingsProfile } from "./types";
 import { UNTYPED_LINK_KEY, SETTING_DEFS } from "./types";
 import { buildGraphData, filterGraphData, countLinkTypes } from "./linkParser";
 import { GraphRenderer2D } from "./graphRenderer2D";
@@ -456,12 +456,12 @@ export class GraphLinkTypesView extends ItemView {
         snapshot.nodeColor = this.settings.nodeColor;
         snapshot.nodeColorHover = this.settings.nodeColorHover;
         snapshot.nodeGroups = JSON.parse(JSON.stringify(this.settings.nodeGroups));
-        // Link type visibility
-        const ltv: Record<string, boolean> = {};
+        // Link type visibility and force rules
+        const ltv: Record<string, { visible: boolean; forceRule?: string }> = {};
         for (const [type, config] of Object.entries(this.settings.linkTypes)) {
-          ltv[type] = config.visible;
+          ltv[type] = { visible: config.visible, forceRule: config.forceRule };
         }
-        snapshot.linkTypeVisibility = ltv;
+        snapshot.linkTypeConfig = ltv;
         snapshot.searchQuery = this.settings.searchQuery;
 
         this.settings.profiles.push({ name, snapshot });
@@ -514,8 +514,16 @@ export class GraphLinkTypesView extends ItemView {
     // Apply search query
     if (snapshot.searchQuery !== undefined) this.settings.searchQuery = snapshot.searchQuery;
 
-    // Apply link type visibility (preserve colors)
-    if (snapshot.linkTypeVisibility) {
+    // Apply link type visibility and force rules (preserve colors)
+    if (snapshot.linkTypeConfig) {
+      for (const [type, cfg] of Object.entries(snapshot.linkTypeConfig as Record<string, { visible: boolean; forceRule?: string }>)) {
+        if (this.settings.linkTypes[type]) {
+          this.settings.linkTypes[type].visible = cfg.visible;
+          this.settings.linkTypes[type].forceRule = cfg.forceRule;
+        }
+      }
+    } else if (snapshot.linkTypeVisibility) {
+      // Backwards compat with old profiles
       for (const [type, visible] of Object.entries(snapshot.linkTypeVisibility)) {
         if (this.settings.linkTypes[type]) {
           this.settings.linkTypes[type].visible = visible as boolean;

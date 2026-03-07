@@ -12,7 +12,7 @@ import { zoom, zoomIdentity, type ZoomBehavior, type D3ZoomEvent } from "d3-zoom
 import { drag, type D3DragEvent } from "d3-drag";
 import type { App } from "obsidian";
 import type { GraphNode, GraphLink, GraphData, GraphLinkTypesSettings } from "./types";
-import { UNTYPED_LINK_KEY, parseForceRules } from "./types";
+import { UNTYPED_LINK_KEY, parseForceRules, type ForceRule } from "./types";
 
 export class GraphRenderer2D {
   private container: HTMLElement;
@@ -40,6 +40,9 @@ export class GraphRenderer2D {
   // Resolved CSS fallback colors
   private resolvedTextColor: string;
   private resolvedBgColor: string;
+
+  // Cached parsed force rules per link type
+  private forceRuleCache = new Map<string, ForceRule[]>();
 
   constructor(container: HTMLElement, app: App, settings: GraphLinkTypesSettings) {
     this.container = container;
@@ -140,6 +143,7 @@ export class GraphRenderer2D {
       curvature: l.curvature,
     })) as GraphLink[];
 
+    this.rebuildForceRuleCache();
     this.simulation.nodes(this.nodes);
     this.simulation.force(
       "link",
@@ -164,6 +168,8 @@ export class GraphRenderer2D {
 
   /** Update force parameters and reheat simulation */
   updateForces(): void {
+    this.rebuildForceRuleCache();
+
     const charge = this.simulation.force("charge") as any;
     if (charge) charge.strength(this.settings.chargeStrength);
 
@@ -578,10 +584,18 @@ export class GraphRenderer2D {
     }
   };
 
+  private rebuildForceRuleCache(): void {
+    this.forceRuleCache.clear();
+    for (const [type, config] of Object.entries(this.settings.linkTypes)) {
+      if (config.forceRule) {
+        this.forceRuleCache.set(type, parseForceRules(config.forceRule));
+      }
+    }
+  }
+
   private getLinkDistance(link: any): number {
-    const config = this.settings.linkTypes[link.type];
-    if (config?.forceRule) {
-      const rules = parseForceRules(config.forceRule);
+    const rules = this.forceRuleCache.get(link.type);
+    if (rules) {
       const distRule = rules.find((r) => r.type === "distance");
       if (distRule) return this.settings.linkDistance * distRule.value;
     }
@@ -595,10 +609,9 @@ export class GraphRenderer2D {
         const target = link.target as GraphNode;
         if (source.vx == null || target.vx == null) continue;
 
-        const config = this.settings.linkTypes[link.type];
-        if (!config?.forceRule) continue;
+        const rules = this.forceRuleCache.get(link.type);
+        if (!rules) continue;
 
-        const rules = parseForceRules(config.forceRule);
         for (const rule of rules) {
           if (rule.type !== "direction") continue;
           const str = rule.value * 50 * alpha;
