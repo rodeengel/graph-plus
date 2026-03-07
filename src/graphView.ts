@@ -37,11 +37,11 @@ export class GraphLinkTypesView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "Graph Link Types";
+    return "Graph view +";
   }
 
   getIcon(): string {
-    return "git-fork";
+    return "graph-plus";
   }
 
   async onOpen(): Promise<void> {
