@@ -1,9 +1,9 @@
 {
-  "id": "graph-link-types",
-  "name": "Graph Link Types",
+  "id": "graph-plus",
+  "name": "Graph Plus",
   "version": "0.1.0",
   "minAppVersion": "1.0.0",
-  "description": "Custom force-directed graph view with typed, colored links parsed from Dataview-style inline fields and frontmatter.",
-  "author": "Nicolas",
+  "description": "Custom force-directed graph view, with typed links parsed from Dataview-style inline fields and frontmatter, in both 2D and 3D.",
+  "author": "Nicolas Ong",
   "isDesktopOnly": false
 }
