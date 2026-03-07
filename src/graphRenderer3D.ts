@@ -298,7 +298,7 @@ export class GraphRenderer3D {
         this.graph.pauseAnimation();
       }
     }
-    this.wrapper.innerHTML = "";
+    this.wrapper.empty();
     this.wrapper.remove();
   }
 }

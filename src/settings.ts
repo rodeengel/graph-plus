@@ -14,7 +14,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    containerEl.createEl("h2", { text: "Graph Link Types" });
+    new Setting(containerEl).setHeading().setName("Graph Link Types");
 
     // --- General (manual — unique control types) ---
     new Setting(containerEl)
@@ -44,7 +44,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
       );
 
     // --- Schema-driven sections ---
-    containerEl.createEl("h3", { text: "Display" });
+    new Setting(containerEl).setHeading().setName("Display");
     this.renderSettingsSection(containerEl, "display");
 
     // Color pickers (manual — not in sidebar)
@@ -72,20 +72,20 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           })
       );
 
-    containerEl.createEl("h3", { text: "2D Display" });
+    new Setting(containerEl).setHeading().setName("2D display");
     this.renderSettingsSection(containerEl, "display2d");
 
-    containerEl.createEl("h3", { text: "3D Display" });
+    new Setting(containerEl).setHeading().setName("3D display");
     this.renderSettingsSection(containerEl, "display3d");
 
-    containerEl.createEl("h3", { text: "Filters" });
+    new Setting(containerEl).setHeading().setName("Filters");
     this.renderSettingsSection(containerEl, "filters");
 
-    containerEl.createEl("h3", { text: "Physics" });
+    new Setting(containerEl).setHeading().setName("Physics");
     this.renderSettingsSection(containerEl, "forces");
 
     // --- Node Groups (manual — complex editor) ---
-    containerEl.createEl("h3", { text: "Node Groups" });
+    new Setting(containerEl).setHeading().setName("Node groups");
     containerEl.createEl("p", {
       text: "Color nodes by query. Supports: path:prefix, file:name, tag:#name, [property:value], bare substring. First match wins.",
       cls: "setting-item-description",
@@ -95,7 +95,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
     this.renderGroupSettings(groupContainer);
 
     // --- Link type colors (manual — dynamic from data) ---
-    containerEl.createEl("h3", { text: "Link Type Colors" });
+    new Setting(containerEl).setHeading().setName("Link type colors");
 
     const types = Object.keys(this.plugin.settings.linkTypes).sort((a, b) => {
       if (a === UNTYPED_LINK_KEY) return 1;
