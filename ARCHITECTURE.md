@@ -51,6 +51,8 @@ GraphRenderer2D / 3D           Renders to canvas / WebGL
 
 Relationship styling and physics are looked up by `link.type` in `settings.linkTypes`.
 
+Effective link spring strength multiplies the global base by per-type attraction, with a ceiling of 2 to prevent unstable D3 layouts at the upper ends of both sliders. Zero attraction remains zero.
+
 ## Semantic Link Configuration
 
 Each `LinkTypeConfig` contains:
@@ -130,6 +132,8 @@ The `ItemView` subclass that owns the UI.
 - **Renderer management** — creates/destroys the active 2D or 3D renderer, pushes filtered data to it
 - **Vault event listeners** — listens for file create/delete/rename/metadata changes and debounces rebuilds (500 ms)
 - **Profiles** — save/load/delete named snapshots of graph settings; semantic relationship configs are part of the snapshot
+
+Settings-tab changes notify open semantic views using the same visual, force, filter and animation effects as sidebar controls. Loading a profile also reapplies the active renderer's force and appearance settings.
 
 ### `graphRenderer2D.ts`
 

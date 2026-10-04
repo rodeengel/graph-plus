@@ -57,6 +57,13 @@ export const DEFAULT_LINK_TYPE_STYLE = {
   attraction: 1,
 };
 
+export const MAX_EFFECTIVE_LINK_STRENGTH = 2;
+
+/** Keep strong multiplier combinations stable when d3 reheats to alpha 1. */
+export function getEffectiveLinkStrength(baseStrength: number, attraction: number): number {
+  return Math.min(MAX_EFFECTIVE_LINK_STRENGTH, Math.max(0, baseStrength * Math.max(0, attraction)));
+}
+
 export function createLinkTypeConfig(
   color: string,
   overrides: Partial<LinkTypeConfig> = {}

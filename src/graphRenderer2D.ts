@@ -8,6 +8,7 @@ import {
   type Simulation,
 } from "d3-force";
 import { select, pointer } from "d3-selection";
+import "d3-transition";
 import { zoom, zoomIdentity, type ZoomBehavior, type D3ZoomEvent } from "d3-zoom";
 import { drag, type D3DragEvent } from "d3-drag";
 import type { App } from "obsidian";
@@ -19,7 +20,7 @@ import type {
   LinkTypeConfig,
   LinkLineStyle,
 } from "./types";
-import { UNTYPED_LINK_KEY, parseForceRules, type ForceRule } from "./types";
+import { UNTYPED_LINK_KEY, parseForceRules, getEffectiveLinkStrength, type ForceRule } from "./types";
 
 export class GraphRenderer2D {
   private container: HTMLElement;
@@ -300,7 +301,8 @@ export class GraphRenderer2D {
       case "dashed":
         return [Math.max(4, width * 4), Math.max(3, width * 2.5)];
       case "dotted":
-        return [Math.max(1, width), Math.max(3, width * 2.5)];
+        // Round caps on zero-length dashes create circles, including on curves.
+        return [0, Math.max(3, width * 2.5)];
       default:
         return [];
     }
@@ -359,6 +361,7 @@ export class GraphRenderer2D {
       ctx.strokeStyle = color;
       ctx.globalAlpha = alpha;
       ctx.lineWidth = linkWidth;
+      ctx.lineCap = config?.lineStyle === "dotted" ? "round" : "butt";
       ctx.setLineDash(this.getLineDash(config?.lineStyle, linkWidth));
 
       const sx = source.x!;
@@ -434,6 +437,7 @@ export class GraphRenderer2D {
       }
 
       ctx.setLineDash([]);
+      ctx.lineCap = "butt";
       ctx.globalAlpha = 1;
     }
 
@@ -656,7 +660,7 @@ export class GraphRenderer2D {
 
   private getLinkStrength(link: any): number {
     const attraction = this.settings.linkTypes[link.type]?.attraction ?? 1;
-    return this.settings.linkStrength * Math.max(0, attraction);
+    return getEffectiveLinkStrength(this.settings.linkStrength, attraction);
   }
 
   private createLinkTypeForce(): (alpha: number) => void {

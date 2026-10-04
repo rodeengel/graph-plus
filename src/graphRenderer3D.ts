@@ -1,39 +1,10 @@
 import type { App } from "obsidian";
+import type { ForceGraph3DInstance } from "3d-force-graph";
 import type { GraphNode, GraphLink, GraphData, GraphLinkTypesSettings } from "./types";
-import { UNTYPED_LINK_KEY, parseForceRules, type ForceRule } from "./types";
+import { UNTYPED_LINK_KEY, parseForceRules, getEffectiveLinkStrength, type ForceRule } from "./types";
 import { forceX, forceY } from "d3-force";
-// @ts-ignore — d3-force-3d is a transitive dep of 3d-force-graph
+// @ts-expect-error — d3-force-3d does not ship TypeScript declarations.
 import { forceZ } from "d3-force-3d";
-
-interface ForceGraph3DInstance {
-  graphData(data: { nodes: any[]; links: any[] }): ForceGraph3DInstance;
-  width(w: number): ForceGraph3DInstance;
-  height(h: number): ForceGraph3DInstance;
-  backgroundColor(c: string): ForceGraph3DInstance;
-  nodeColor(fn: (node: any) => string): ForceGraph3DInstance;
-  nodeLabel(fn: (node: any) => string): ForceGraph3DInstance;
-  nodeVal(fn: (node: any) => number): ForceGraph3DInstance;
-  linkColor(fn: (link: any) => string): ForceGraph3DInstance;
-  linkLabel(fn: (link: any) => string): ForceGraph3DInstance;
-  linkWidth(w: number | ((link: any) => number)): ForceGraph3DInstance;
-  linkCurvature(v: number | string | ((link: any) => number)): ForceGraph3DInstance;
-  linkDirectionalParticles(n: number): ForceGraph3DInstance;
-  linkDirectionalArrowLength(n: number | ((link: any) => number)): ForceGraph3DInstance;
-  linkDirectionalArrowRelPos(n: number): ForceGraph3DInstance;
-  linkOpacity(n: number): ForceGraph3DInstance;
-  nodeOpacity(n: number): ForceGraph3DInstance;
-  nodeRelSize(n: number): ForceGraph3DInstance;
-  onNodeClick(fn: (node: any) => void): ForceGraph3DInstance;
-  onNodeRightClick(fn: (node: any) => void): ForceGraph3DInstance;
-  nodeThreeObject(fn: ((node: any) => any) | null): ForceGraph3DInstance;
-  nodeThreeObjectExtend(v: boolean): ForceGraph3DInstance;
-  d3Force(name: string, force?: any): any;
-  d3ReheatSimulation(): ForceGraph3DInstance;
-  zoomToFit(ms?: number, padding?: number): ForceGraph3DInstance;
-  _destructor?(): void;
-  pauseAnimation?(): void;
-  resumeAnimation?(): void;
-}
 
 export class GraphRenderer3D {
   private container: HTMLElement;
@@ -116,7 +87,7 @@ export class GraphRenderer3D {
       if (this.destroyed) return;
 
       const rect = this.wrapper.getBoundingClientRect();
-      this.graph = ForceGraph3D()(this.wrapper)
+      this.graph = new ForceGraph3D(this.wrapper)
         .width(rect.width)
         .height(rect.height)
         .backgroundColor("rgba(0,0,0,0)")
@@ -288,7 +259,7 @@ export class GraphRenderer3D {
 
   private getLinkStrength(link: any): number {
     const attraction = this.settings.linkTypes[link.type]?.attraction ?? 1;
-    return this.settings.linkStrength * Math.max(0, attraction);
+    return getEffectiveLinkStrength(this.settings.linkStrength, attraction);
   }
 
   private createLinkTypeForce(): (alpha: number) => void {

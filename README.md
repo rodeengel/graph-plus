@@ -104,6 +104,8 @@ The settings are stored in plugin configuration, not written into the notes them
 | Attraction × | Multiplies the global link attraction |
 | Attraction = 0 | Keeps the relationship visible but removes its normal spring pull |
 
+Effective spring strength is `base link force × attraction multiplier`, capped at 2 in both renderers to keep strong relationships from destabilizing the D3 simulation.
+
 Width, arrow behavior, distance and attraction are also honored in 3D. Per-type dash patterns and opacity are currently 2D-first.
 
 ## Advanced link forces
@@ -142,11 +144,15 @@ graph-plus-semantic
 
 so it can be installed beside the original Graph Plus during development.
 
-1. Build the project.
+1. Run `npm ci`, `npm test`, and `npm run package` with Node.js 20.
 2. Copy `main.js`, `manifest.json`, and `styles.css` into:
    `.obsidian/plugins/graph-plus-semantic/`
 3. Enable **Graph Plus Semantic** in Obsidian.
 4. Run **Graph Plus Semantic: Open Graph Plus Semantic view** from the command palette.
+
+`npm run package` type-checks the source, builds the production bundle, and writes all three files inside `dist/graph-plus-semantic/`. The manifest ID and installation folder must both be `graph-plus-semantic`. Before updating a vault, back up its existing plugin settings (`data.json`); the package deliberately contains no settings or vault notes.
+
+Source tests exercise parsing, Canvas drawing instructions, relationship forces, profile restoration, and settings notifications with host stubs. They do not verify Obsidian loading, actual Canvas/WebGL rendering, or pointer/keyboard behavior. Test both renderers and both settings surfaces in Obsidian before considering the milestone accepted.
 
 ## Roadmap
 

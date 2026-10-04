@@ -1,7 +1,8 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type GraphPlusSemanticPlugin from "./main";
-import type { LinkArrowMode, LinkLineStyle } from "./types";
+import type { LinkArrowMode, LinkLineStyle, SettingDef, SettingEffect } from "./types";
 import { COLOR_PALETTE, UNTYPED_LINK_KEY, SETTING_DEFS, DEFAULT_LINK_TYPE_STYLE } from "./types";
+import { GraphLinkTypesView, VIEW_TYPE } from "./graphView";
 
 export class GraphLinkTypesSettingTab extends PluginSettingTab {
   plugin: GraphPlusSemanticPlugin;
@@ -9,6 +10,19 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
   constructor(app: App, plugin: GraphPlusSemanticPlugin) {
     super(app, plugin);
     this.plugin = plugin;
+  }
+
+  private async saveSettings(
+    effect?: SettingEffect | "all",
+    renderers?: SettingDef["renderers"]
+  ): Promise<void> {
+    await this.plugin.saveSettings();
+    if (!effect) return;
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+      if (leaf.view instanceof GraphLinkTypesView) {
+        leaf.view.refreshSettings(effect, renderers);
+      }
+    }
   }
 
   display(): void {
@@ -28,7 +42,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.defaultMode)
           .onChange(async (value) => {
             this.plugin.settings.defaultMode = value as "2d" | "3d";
-            await this.plugin.saveSettings();
+            await this.saveSettings();
           })
       );
 
@@ -40,7 +54,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.showUntyped)
           .onChange(async (value) => {
             this.plugin.settings.showUntyped = value;
-            await this.plugin.saveSettings();
+            await this.saveSettings("rebuild");
           })
       );
 
@@ -57,7 +71,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.nodeColor)
           .onChange(async (value) => {
             this.plugin.settings.nodeColor = value;
-            await this.plugin.saveSettings();
+            await this.saveSettings("visual");
           })
       );
 
@@ -69,7 +83,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.nodeColorHover)
           .onChange(async (value) => {
             this.plugin.settings.nodeColorHover = value;
-            await this.plugin.saveSettings();
+            await this.saveSettings("visual", "2d");
           })
       );
 
@@ -118,7 +132,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
         .addColorPicker((picker) =>
           picker.setValue(config.color).onChange(async (value) => {
             config.color = value;
-            await this.plugin.saveSettings();
+            await this.saveSettings("visual");
           })
         )
         .addToggle((toggle) =>
@@ -135,7 +149,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
               } else {
                 config.visible = value;
               }
-              await this.plugin.saveSettings();
+              await this.saveSettings("rebuild");
             })
         );
 
@@ -150,7 +164,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
             .setValue(config.lineStyle)
             .onChange(async (value) => {
               config.lineStyle = value as LinkLineStyle;
-              await this.plugin.saveSettings();
+              await this.saveSettings("visual", "2d");
             })
         )
         .addDropdown((dropdown) =>
@@ -161,7 +175,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
             .setValue(config.arrowMode)
             .onChange(async (value) => {
               config.arrowMode = value as LinkArrowMode;
-              await this.plugin.saveSettings();
+              await this.saveSettings("visual");
             })
         );
 
@@ -175,7 +189,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
             .setDynamicTooltip()
             .onChange(async (value) => {
               config.widthMultiplier = value;
-              await this.plugin.saveSettings();
+              await this.saveSettings("visual");
             })
         );
 
@@ -189,7 +203,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
             .setDynamicTooltip()
             .onChange(async (value) => {
               config.opacity = value;
-              await this.plugin.saveSettings();
+              await this.saveSettings("visual", "2d");
             })
         );
 
@@ -203,13 +217,13 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
             .setDynamicTooltip()
             .onChange(async (value) => {
               config.distanceMultiplier = value;
-              await this.plugin.saveSettings();
+              await this.saveSettings("force");
             })
         );
 
       new Setting(containerEl)
         .setName(`${displayName}: attraction`)
-        .setDesc("Multiplier applied to the global link force; 0 makes the relationship layout-neutral")
+        .setDesc("Base force × attraction, capped at 2 for layout stability. Set 0 to remove the normal spring pull.")
         .addSlider((slider) =>
           slider
             .setLimits(0, 3, 0.1)
@@ -217,7 +231,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
             .setDynamicTooltip()
             .onChange(async (value) => {
               config.attraction = value;
-              await this.plugin.saveSettings();
+              await this.saveSettings("force");
             })
         );
 
@@ -230,7 +244,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
             .setValue(config.forceRule || "")
             .onChange(async (value) => {
               config.forceRule = value.trim() || undefined;
-              await this.plugin.saveSettings();
+              await this.saveSettings("force");
             })
         );
 
@@ -239,7 +253,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           .setButtonText(`Reset ${displayName} semantic style`)
           .onClick(async () => {
             Object.assign(config, DEFAULT_LINK_TYPE_STYLE);
-            await this.plugin.saveSettings();
+            await this.saveSettings("all");
             this.display();
           })
       );
@@ -255,7 +269,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
               COLOR_PALETTE[i % COLOR_PALETTE.length];
             i++;
           }
-          await this.plugin.saveSettings();
+          await this.saveSettings("visual");
           this.display();
         })
     );
@@ -273,7 +287,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           .addToggle((toggle) =>
             toggle.setValue(def.invert ? !raw : raw).onChange(async (value) => {
               (this.plugin.settings as any)[def.key] = def.invert ? !value : value;
-              await this.plugin.saveSettings();
+              await this.saveSettings(def.effect, def.renderers);
             })
           );
       } else if (def.type === "slider") {
@@ -288,7 +302,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
               .setDynamicTooltip()
               .onChange(async (value) => {
                 (this.plugin.settings as any)[def.key] = def.invert ? -value : value;
-                await this.plugin.saveSettings();
+                await this.saveSettings(def.effect, def.renderers);
               })
           );
       }
@@ -309,13 +323,13 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
             .setValue(group.query)
             .onChange(async (value) => {
               group.query = value;
-              await this.plugin.saveSettings();
+              await this.saveSettings("rebuild");
             })
         )
         .addColorPicker((picker) =>
           picker.setValue(group.color).onChange(async (value) => {
             group.color = value;
-            await this.plugin.saveSettings();
+            await this.saveSettings("rebuild");
           })
         )
         .addButton((button) =>
@@ -324,7 +338,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
             .setWarning()
             .onClick(async () => {
               groups.splice(i, 1);
-              await this.plugin.saveSettings();
+              await this.saveSettings("rebuild");
               this.renderGroupSettings(container);
             })
         );
@@ -333,7 +347,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
     new Setting(container).addButton((button) =>
       button.setButtonText("Add group").onClick(async () => {
         groups.push({ query: "", color: "#4363d8" });
-        await this.plugin.saveSettings();
+        await this.saveSettings("rebuild");
         this.renderGroupSettings(container);
       })
     );

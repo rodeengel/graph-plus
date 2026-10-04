@@ -3,13 +3,14 @@ import type {
   GraphLinkTypesSettings,
   GraphData,
   SettingDef,
+  SettingEffect,
   SettingsProfile,
   LinkTypeConfig,
   LinkLineStyle,
   LinkArrowMode,
 } from "./types";
 import { UNTYPED_LINK_KEY, SETTING_DEFS } from "./types";
-import { buildGraphData, filterGraphData, countLinkTypes } from "./linkParser";
+import { buildGraphData, filterGraphData, countLinkTypes, applyNodeGroups } from "./linkParser";
 import { GraphRenderer2D } from "./graphRenderer2D";
 import { GraphRenderer3D } from "./graphRenderer3D";
 
@@ -233,7 +234,7 @@ export class GraphLinkTypesView extends ItemView {
   }
 
   /** Apply the appropriate renderer update for a setting change */
-  private applySettingEffect(def: SettingDef): void {
+  private applySettingEffect(def: Pick<SettingDef, "effect" | "renderers">): void {
     const r = def.renderers ?? "both";
     switch (def.effect) {
       case "rebuild":
@@ -251,6 +252,20 @@ export class GraphLinkTypesView extends ItemView {
         if (this.renderer2D) this.renderer2D.setAnimate(this.settings.animate);
         break;
     }
+  }
+
+  /** Keep an already-open graph and its sidebar in sync with the settings tab. */
+  refreshSettings(effect: SettingEffect | "all", renderers?: SettingDef["renderers"]): void {
+    this.buildFilterPanel();
+    if (effect === "all") {
+      this.updateRelationshipForces();
+      this.updateRelationshipVisuals();
+      return;
+    }
+    if (effect === "rebuild") {
+      applyNodeGroups(this.fullData.nodes, this.settings.nodeGroups);
+    }
+    this.applySettingEffect({ effect, renderers });
   }
 
   /** Build the Relationship Types section with visual + physics controls. */
@@ -390,7 +405,8 @@ export class GraphLinkTypesView extends ItemView {
           config.attraction = value;
           await this.saveSettings();
           this.updateRelationshipForces();
-        }
+        },
+        "Base force × attraction, capped at 2 for layout stability"
       );
     }
   }
@@ -466,11 +482,13 @@ export class GraphLinkTypesView extends ItemView {
     min: number,
     max: number,
     step: number,
-    onChange: (value: number) => Promise<void>
+    onChange: (value: number) => Promise<void>,
+    description?: string
   ): void {
     const control = parent.createDiv({ cls: "gps-link-style-control" });
     control.createEl("label", { text: label });
     const input = control.createEl("input", { type: "number" });
+    if (description) input.title = description;
     input.min = String(min);
     input.max = String(max);
     input.step = String(step);
@@ -671,7 +689,9 @@ export class GraphLinkTypesView extends ItemView {
     if (snapshot.linkTypeConfig) {
       for (const [type, cfg] of Object.entries(snapshot.linkTypeConfig as Record<string, Partial<LinkTypeConfig>>)) {
         if (this.settings.linkTypes[type]) {
-          Object.assign(this.settings.linkTypes[type], cfg);
+          // JSON omits absent optional fields. Restore an absent forceRule too,
+          // so a profile saved without a rule can clear one added afterwards.
+          Object.assign(this.settings.linkTypes[type], cfg, { forceRule: cfg.forceRule });
         }
       }
     } else if (snapshot.linkTypeVisibility) {
@@ -684,7 +704,9 @@ export class GraphLinkTypesView extends ItemView {
     }
 
     await this.saveSettings();
+    this.updateRelationshipForces();
     await this.rebuildGraph();
+    this.updateRelationshipVisuals();
   }
 
   private initRenderer(): void {
