@@ -35,7 +35,7 @@ Relationship type counts count each explicit relation once, plus its ordinary ty
 
 ## Appearance and layout
 
-Membership connections reuse the type's color, line style, width, opacity, visibility, distance, and attraction. Junctions use their relationship type color and are always labelled with the source name and authored ID. Unordered membership ignores global/per-type arrows and directional force rules. Ordinary directed links keep arrow and directional behavior. Legacy extra distance multipliers still apply.
+In 2D, membership connections reuse the type's color, line style, width, opacity, visibility, distance, and attraction. 3D retains global opacity and does not apply per-type dash patterns. Junctions use their relationship type color and are always labelled with the source name and authored ID. Unordered membership ignores global/per-type arrows and directional force rules. Ordinary directed links keep arrow and directional behavior. Legacy extra distance multipliers still apply.
 
 For an authored relation with `n` members:
 
@@ -49,7 +49,7 @@ each membership connection's spring strength
 
 The sum of configured spring strengths is bounded by 2. Filtering uses the original authored member count, so hiding a member does not strengthen the remaining connections. Attraction zero disables the membership springs. D3's degree bias, charge, centering, collision, and other relationships also influence final positions; this is a layout convention, not a physical model or Wolfram physics.
 
-Visual changes redraw without restarting layout. Metadata-only refreshes reuse the 2D simulation objects. Topology changes reuse surviving nodes, pins, velocities, and camera state; new junctions start near known members. A paused topology update keeps surviving positions. The initial paused graph still settles once. Switching between 2D and 3D creates the chosen renderer, as before; camera preservation across that mode switch is not promised. Existing collapsed-menu and group-editor preservation remains in place. Profiles include the projection toggle and relationship appearance/force settings.
+Visual changes redraw without restarting layout. Metadata-only refreshes reuse the 2D simulation objects. In 2D, topology changes reuse surviving nodes, pins, velocities, and camera state; new junctions start near known members. A paused 2D topology update keeps surviving positions. 3D data updates recreate simulation nodes. The initial paused graph still settles once. Switching between 2D and 3D creates the chosen renderer, as before; camera preservation across that mode switch is not promised. Existing collapsed-menu and group-editor preservation remains in place. Profiles include the projection toggle and relationship appearance/force settings.
 
 ## Focused acceptance fixtures
 
