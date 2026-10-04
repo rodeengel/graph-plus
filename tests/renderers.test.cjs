@@ -13,6 +13,7 @@ const result = esbuild.buildSync({
       'export { GraphRenderer2D } from "./src/graphRenderer2D";',
       'export { GraphRenderer3D } from "./src/graphRenderer3D";',
       'export { DEFAULT_SETTINGS, createLinkTypeConfig } from "./src/types";',
+      'export { zoom, zoomIdentity } from "d3-zoom";',
       'export { forceSimulation, forceLink, forceManyBody, forceCollide, forceX, forceY } from "d3-force";',
       'export { forceSimulation as forceSimulation3D, forceLink as forceLink3D, forceManyBody as forceManyBody3D, forceZ } from "d3-force-3d";',
     ].join("\n"),
@@ -32,6 +33,7 @@ compiled.paths = module.paths;
 compiled._compile(result.outputFiles[0].text, compiled.filename);
 const { GraphRenderer2D, GraphRenderer3D, DEFAULT_SETTINGS, createLinkTypeConfig } = compiled.exports;
 const { forceSimulation, forceLink, forceManyBody, forceCollide, forceX, forceY, forceSimulation3D, forceLink3D, forceManyBody3D, forceZ } = compiled.exports;
+const { zoom, zoomIdentity } = compiled.exports;
 
 function settings(linkTypes = {}, overrides = {}) {
   return { ...DEFAULT_SETTINGS, linkTypes, ...overrides };
@@ -39,10 +41,12 @@ function settings(linkTypes = {}, overrides = {}) {
 
 function recordingContext() {
   const draws = [];
+  const labels = [];
   let currentPath = [];
   let dash = [];
   const ctx = {
     draws,
+    labels,
     lineCap: "butt",
     globalAlpha: 1,
     save() {}, restore() {}, clearRect() {}, translate() {}, scale() {},
@@ -55,7 +59,8 @@ function recordingContext() {
     setLineDash(value) { dash = [...value]; },
     stroke() { record("stroke"); },
     fill() { record("fill"); },
-    strokeText() {}, fillText() {},
+    strokeText() {},
+    fillText(text, x, y) { labels.push({ text, x, y, font: ctx.font, color: ctx.fillStyle }); },
   };
   function record(kind) {
     draws.push({
@@ -309,5 +314,462 @@ test("maximum attraction combinations stay bounded in real 2D and 3D d3 simulati
         }
       }
     }
+  }
+});
+
+const explicitRelation = (id = "r-1", members = ["a", "b", "c"]) => Object.freeze({
+  id, type: "alliance", ordered: false, members: Object.freeze(members),
+  sourcePath: `Relations/${id}.md`, sourceName: `Alliance ${id}`,
+});
+
+test("2D relationship junctions draw labelled diamonds and unordered membership never draws arrows", () => {
+  const relation = explicitRelation();
+  const junction = { ...node("\u0000relation:r-1", 100, 100), relation, groupColor: "#wrong-group" };
+  const a = node("a", 150, 100);
+  const renderer = fixture2D(settings({
+    alliance: createLinkTypeConfig("#12abcd", { arrowMode: "on", lineStyle: "dotted", widthMultiplier: 2, opacity: 0.4 }),
+  }, { showNodeLabels: false, showArrows: true, showLabels: true }), [
+    { source: junction, target: a, type: "alliance", curvature: 0, kind: "membership", relationId: relation.id, memberCount: 3 },
+  ], [junction, a]);
+  renderer.transform.k = 0.4;
+  renderer.render();
+  const [incidence, diamondFill, diamondOutline, entityFill] = renderer.ctx.draws;
+  assert.equal(incidence.kind, "stroke");
+  assert.equal(incidence.color, "#12abcd");
+  assert.equal(incidence.lineWidth, 3);
+  assert.equal(incidence.alpha, 0.4);
+  assert.deepEqual(incidence.dash, [0, 7.5]);
+  assert.deepEqual(diamondFill.path.map(command => command[0]),
+    ["moveTo", "lineTo", "lineTo", "lineTo", "closePath"]);
+  assert.equal(diamondOutline.color, "#12abcd", "Junction type color takes priority over entity groups");
+  assert.equal(entityFill.path[0][0], "arc", "Ordinary entities retain their circles");
+  assert.equal(renderer.ctx.draws.filter(draw => draw.kind === "fill").length, 2, "No membership arrowhead was drawn");
+  assert.deepEqual(renderer.ctx.labels.map(label => label.text), ["Alliance r-1 [r-1]"]);
+  assert.equal(renderer.shouldShowArrow({ type: "alliance" }), true, "Ordinary links retain arrow overrides");
+});
+
+test("2D junction selection exposes the complete authored relation and opens its source without a callback", () => {
+  const relation = explicitRelation();
+  const junction = { ...node("\u0000relation:r-1", 100, 100), relation };
+  const renderer = fixture2D(settings(), [], [junction]);
+  let selected;
+  const opened = [];
+  renderer.app = { workspace: { openLinkText: (...args) => opened.push(args) } };
+  renderer.onSelectRelation = record => { selected = record; };
+  renderer.selectNode(junction);
+  assert.strictEqual(selected, relation);
+  assert.deepEqual(selected.members, ["a", "b", "c"]);
+  assert.equal(opened.length, 0);
+  renderer.selectNode(node("a", 150, 100));
+  assert.deepEqual(opened.pop(), ["a", "", false]);
+  renderer.onSelectRelation = undefined;
+  renderer.selectNode(junction);
+  assert.deepEqual(opened.pop(), ["Relations/r-1.md", "", false]);
+});
+
+test("2D membership springs normalize a bounded relation budget and ignore directional force rules", () => {
+  const renderer = fixture2D(settings({
+    alliance: createLinkTypeConfig("#12abcd", { attraction: 3, distanceMultiplier: 2 }),
+  }, { linkStrength: 2, linkDistance: 60 }), [], []);
+  renderer.forceRuleCache.set("alliance", [{ type: "distance", value: 1.5 }, { type: "direction", dir: "down", value: 1 }]);
+  for (const size of [2, 3, 10, 50]) {
+    const link = { type: "alliance", kind: "membership", memberCount: size };
+    assert.equal(renderer.getLinkStrength(link), 2 / size);
+    assert.equal(renderer.getLinkStrength(link) * size, 2);
+    assert.equal(renderer.getLinkDistance(link), 180, "Distance is participant-to-junction distance");
+  }
+  const junction = { ...node("junction", 0, 0), vx: 0, vy: 0 };
+  const participant = { ...node("a", 10, 10), vx: 0, vy: 0 };
+  renderer.links = [{ source: junction, target: participant, type: "alliance", kind: "membership", memberCount: 3, curvature: 0 }];
+  const applyDirection = renderer.createLinkTypeForce();
+  applyDirection(0.2);
+  assert.equal(participant.vy, 0, "Unordered membership has no invented down direction");
+  delete renderer.links[0].kind;
+  applyDirection(0.2);
+  assert.equal(participant.vy, 10, "Ordinary directed link rules are preserved");
+});
+
+test("2D metadata refreshes and paused topology changes preserve positions, pins, camera and semantic source objects", () => {
+  const a = { ...node("a", 10, 20), vx: 0.2, vy: -0.1, fx: 10, fy: 20 };
+  const b = { ...node("b", 100, 40), vx: -0.2, vy: 0.1 };
+  const renderer = fixture2D(settings({ alliance: createLinkTypeConfig("#12abcd") }, { animate: false }), [], [a, b]);
+  renderer.simulation = forceSimulation(renderer.nodes).alpha(0.07).stop();
+  renderer.transform = { x: 213, y: -51, k: 2.25 };
+  let restarts = 0;
+  const restart = renderer.simulation.restart.bind(renderer.simulation);
+  renderer.simulation.restart = () => { restarts++; return restart(); };
+  const ordinaryData = {
+    nodes: [Object.freeze({ ...a, tags: Object.freeze([]), properties: Object.freeze({}) }), Object.freeze({ ...b })],
+    links: [Object.freeze({ source: "a", target: "b", type: "alliance", curvature: 0 })],
+  };
+  renderer.updateData(ordinaryData);
+  const originalCamera = renderer.transform;
+  const positions = renderer.nodes.map(({ x, y, vx, vy, fx, fy }) => ({ x, y, vx, vy, fx, fy }));
+  const originalNodes = renderer.nodes;
+  const originalLinks = renderer.links;
+  const originalRestarts = restarts;
+  renderer.simulation.alpha(0.07);
+  renderer.updateData({ ...ordinaryData, nodes: ordinaryData.nodes.map(n => ({ ...n, name: `Renamed ${n.id}` })) });
+  assert.strictEqual(renderer.nodes, originalNodes);
+  assert.strictEqual(renderer.links, originalLinks);
+  assert.equal(renderer.nodes[0].name, "Renamed a");
+  assert.equal(restarts, originalRestarts);
+  assert.equal(renderer.simulation.alpha(), 0.07);
+  assert.deepEqual(renderer.nodes.map(({ x, y, vx, vy, fx, fy }) => ({ x, y, vx, vy, fx, fy })), positions);
+
+  const relation = explicitRelation("new", ["a", "b"]);
+  const junction = Object.freeze({ ...node("\u0000relation:new", undefined, undefined), relation });
+  const projected = {
+    nodes: [...ordinaryData.nodes, junction],
+    links: [...ordinaryData.links, ...relation.members.map(target => Object.freeze({
+      source: junction.id, target, type: relation.type, curvature: 0, kind: "membership", relationId: relation.id, memberCount: relation.members.length,
+    }))],
+  };
+  renderer.updateData(projected);
+  assert.strictEqual(renderer.nodes[0], a);
+  assert.strictEqual(renderer.nodes[1], b);
+  assert.strictEqual(renderer.transform, originalCamera);
+  assert.deepEqual(renderer.nodes.slice(0, 2).map(({ x, y, vx, vy, fx, fy }) => ({ x, y, vx, vy, fx, fy })), positions);
+  assert.deepEqual([renderer.nodes[2].x, renderer.nodes[2].y], [55, 30], "New junction starts at member centroid");
+  assert.equal(junction.x, undefined, "Projection source is never mutated by the simulation");
+  assert.equal(projected.links[1].source, junction.id, "Source link endpoints remain semantic IDs");
+  assert.strictEqual(renderer.nodes[2].relation, relation);
+  renderer.simulation.stop();
+});
+
+test("3D standard graph retains relation notes and membership metadata without invented arrows or direction", () => {
+  // Exercise applyData and the actual installed d3-force-3d link objects; this
+  // deliberately does not instantiate WebGL or claim a native Obsidian check.
+  const renderer = Object.create(GraphRenderer3D.prototype);
+  renderer.settings = settings({
+    alliance: createLinkTypeConfig("#12abcd", {
+      attraction: 3, distanceMultiplier: 2, arrowMode: "on", forceRule: "down:1 distance:1.5x",
+    }),
+  }, { linkStrength: 2, linkDistance: 60, showArrows: true });
+  renderer.forceRuleCache = new Map();
+  const relation = explicitRelation();
+  const source = node(relation.sourcePath, 0, 0);
+  const members = relation.members.map((id, index) => node(id, (index + 1) * 30, 0));
+  const input = {
+    nodes: [source, ...members],
+    links: [
+      ...members.map(member => Object.freeze({
+        source, target: member, type: relation.type, curvature: 0,
+        kind: "membership", relationId: relation.id, memberCount: members.length,
+      })),
+      Object.freeze({ source: members[0], target: members[1], type: relation.type, curvature: 0 }),
+    ],
+  };
+  let data, simulation;
+  renderer.graph = {
+    graphData(value) { data = value; },
+    d3Force(name) { return simulation.force(name); },
+  };
+  renderer.applyData(input);
+  assert.deepEqual(data.nodes.map(n => n.id), ["Relations/r-1.md", "a", "b", "c"]);
+  assert.ok(data.nodes.every(n => !n.relation), "Standard 3D uses real note nodes without synthetic junctions");
+  assert.deepEqual(data.links.slice(0, 3).map(({ source, target, kind, relationId, memberCount }) =>
+    ({ source, target, kind, relationId, memberCount })), relation.members.map(target => ({
+    source: relation.sourcePath, target, kind: "membership", relationId: relation.id, memberCount: 3,
+  })));
+  for (const link of data.links.slice(0, 3)) {
+    assert.equal(renderer.getLinkStrength(link), 2 / 3);
+    assert.equal(renderer.getLinkDistance(link), 180);
+    assert.equal(renderer.shouldShowArrow(link), false);
+  }
+  assert.equal(renderer.getLinkStrength(data.links[3]), 2);
+  assert.equal(renderer.shouldShowArrow(data.links[3]), true);
+
+  simulation = forceSimulation3D(data.nodes, 3)
+    .force("link", forceLink3D(data.links).id(n => n.id)
+      .strength(l => renderer.getLinkStrength(l)).distance(l => renderer.getLinkDistance(l)))
+    .stop();
+  renderer.createLinkTypeForce()(0.2);
+  const byId = new Map(data.nodes.map(n => [n.id, n]));
+  assert.equal(byId.get("a").vy, 0);
+  assert.equal(byId.get("c").vy, 0);
+  assert.equal(byId.get("b").vy, -10, "Only the ordinary a-to-b rule applies the 3D down force");
+  assert.strictEqual(input.links[0].source, source, "Rendering does not mutate source membership endpoints");
+  assert.strictEqual(input.links[0].target, members[0]);
+  simulation.stop();
+});
+
+test("2D resize redraws a paused graph without changing positions, camera, alpha or restarting physics", () => {
+  const a = { ...node("a", 10, 20), vx: 0.2, vy: -0.1, fx: 10, fy: 20 };
+  const b = { ...node("b", 100, 40), vx: -0.2, vy: 0.1 };
+  const renderer = fixture2D(settings({}, { animate: false, showNodeLabels: false }), [], [a, b]);
+  const xForce = forceX(400).strength(0.1);
+  const yForce = forceY(300).strength(0.1);
+  renderer.simulation = forceSimulation(renderer.nodes)
+    .force("x", xForce).force("y", yForce).alpha(0.037).alphaTarget(0).stop();
+  const camera = renderer.transform = { x: 237, y: -61, k: 1.75 };
+  const positions = renderer.nodes.map(({ x, y, vx, vy, fx, fy }) => ({ x, y, vx, vy, fx, fy }));
+  let sizes = 0, restarts = 0, renders = 0;
+  renderer.updateSize = () => { sizes++; renderer.width = 1000; renderer.height = 700; };
+  const restart = renderer.simulation.restart.bind(renderer.simulation);
+  renderer.simulation.restart = () => { restarts++; return restart(); };
+  const render = renderer.render.bind(renderer);
+  renderer.render = () => { renders++; render(); };
+  try {
+    renderer.handleResize();
+    renderer.handleResize(); // Covers the hide/show notifications from opening a note.
+    assert.equal(sizes, 2);
+    assert.equal(renders, 2);
+    assert.equal(xForce.x()(a), 500);
+    assert.equal(yForce.y()(a), 350);
+    assert.equal(restarts, 0);
+    assert.equal(renderer.simulation.alpha(), 0.037);
+    assert.equal(renderer.simulation.alphaTarget(), 0);
+    assert.strictEqual(renderer.transform, camera);
+    assert.deepEqual(renderer.nodes.map(({ x, y, vx, vy, fx, fy }) => ({ x, y, vx, vy, fx, fy })), positions);
+
+    renderer.settings.animate = true;
+    renderer.handleResize();
+    assert.equal(sizes, 3);
+    assert.equal(renders, 3);
+    assert.equal(restarts, 1, "Animated graphs retain the existing resize restart behavior");
+    assert.equal(renderer.simulation.alpha(), 0.1);
+  } finally {
+    renderer.simulation.stop();
+  }
+});
+
+test("paused 2D projection toggles retain source-note and junction layout without duplicating entities", () => {
+  const relation = explicitRelation("toggle", ["a", "b"]);
+  const junctionId = "\u0000relation:toggle";
+  const makeData = junctions => ({
+    nodes: [node("a", undefined, undefined), node("b", undefined, undefined), {
+      ...node(junctions ? junctionId : relation.sourcePath, undefined, undefined),
+      name: relation.sourceName,
+      properties: { graph_kind: ["relation"], graph_id: [relation.id] },
+      ...(junctions ? { relation } : {}),
+    }],
+    links: relation.members.map(target => ({
+      source: junctions ? junctionId : relation.sourcePath, target, type: relation.type,
+      curvature: 0, kind: "membership", relationId: relation.id, memberCount: relation.members.length,
+    })),
+  });
+  const renderer = fixture2D(settings({ alliance: createLinkTypeConfig("#12abcd") }, { animate: false }), [], []);
+  renderer.simulation = forceSimulation([]).stop();
+  const camera = renderer.transform = { x: 137, y: -45, k: 1.8 };
+  try {
+    renderer.updateData(makeData(true));
+    const original = [...renderer.nodes];
+    original.forEach((n, index) => Object.assign(n, {
+      x: 80 + index * 50, y: 120 + index * 30,
+      vx: index * 0.15, vy: index * -0.1, fx: null, fy: null,
+    }));
+    Object.assign(original[2], { fx: original[2].x, fy: original[2].y });
+    const layout = original.map(({ x, y, vx, vy, fx, fy }) => ({ x, y, vx, vy, fx, fy }));
+    for (const junctions of [false, true, false, true]) {
+      renderer.updateData(makeData(junctions));
+      assert.strictEqual(renderer.transform, camera);
+      assert.equal(renderer.nodes.length, 3);
+      assert.equal(new Set(renderer.nodes).size, 3, "Representations do not share a duplicated layout object");
+      assert.deepEqual(renderer.nodes.map(n => n.id), ["a", "b", junctions ? junctionId : relation.sourcePath]);
+      renderer.nodes.forEach((n, index) => assert.strictEqual(n, original[index]));
+      assert.deepEqual(renderer.nodes.map(({ x, y, vx, vy, fx, fy }) => ({ x, y, vx, vy, fx, fy })), layout);
+      assert.equal(renderer.nodes[2].relation, junctions ? relation : undefined, "Standard notes do not retain junction metadata");
+      assert.deepEqual(renderer.nodes[2].properties.graph_id, [relation.id]);
+      assert.ok(renderer.links.every(l => l.source === renderer.nodes[2]));
+    }
+  } finally {
+    renderer.simulation.stop();
+  }
+});
+
+test("paused 2D junction clicks do not resume physics and dragging moves only the selected node", () => {
+  const junction = { ...node("\u0000relation:r-1", 100, 120), relation: explicitRelation(), vx: 0.2, vy: -0.1 };
+  const entity = { ...node("a", 250, 170), vx: -0.1, vy: 0.2 };
+  const renderer = fixture2D(settings({}, { animate: false }), [], [junction, entity]);
+  renderer.simulation = forceSimulation(renderer.nodes).alpha(0.037).alphaTarget(0).stop();
+  const camera = renderer.transform = { x: 200, y: -40, k: 2 };
+  let restarts = 0;
+  const restart = renderer.simulation.restart.bind(renderer.simulation);
+  renderer.simulation.restart = () => { restarts++; return restart(); };
+  const positions = renderer.nodes.map(({ x, y, vx, vy }) => ({ x, y, vx, vy }));
+  try {
+    renderer.startNodeDrag(junction, 0);
+    renderer.endNodeDrag(junction, 0); // Plain mousedown/mouseup followed by inspection.
+    assert.equal(restarts, 0);
+    assert.equal(renderer.simulation.alpha(), 0.037);
+    assert.equal(renderer.simulation.alphaTarget(), 0);
+    assert.deepEqual(renderer.nodes.map(({ x, y, vx, vy }) => ({ x, y, vx, vy })), positions);
+
+    renderer.startNodeDrag(junction, 0);
+    renderer.moveNodeDrag(junction, 500, 320);
+    assert.deepEqual([junction.x, junction.y, junction.fx, junction.fy], [150, 180, 150, 180]);
+    assert.deepEqual({ x: entity.x, y: entity.y, vx: entity.vx, vy: entity.vy }, positions[1]);
+    assert.equal(restarts, 0);
+    assert.equal(renderer.simulation.alpha(), 0.037);
+    assert.strictEqual(renderer.transform, camera);
+    assert.ok(renderer.ctx.draws.length > 0, "Paused dragging redraws the node without simulation ticks");
+    renderer.endNodeDrag(junction, 0);
+    assert.deepEqual([junction.fx, junction.fy], [null, null]);
+
+    renderer.settings.animate = true;
+    renderer.startNodeDrag(junction, 0);
+    assert.equal(restarts, 1);
+    assert.equal(renderer.simulation.alphaTarget(), 0.3);
+    const activePosition = { x: junction.x, y: junction.y };
+    renderer.moveNodeDrag(junction, 540, 360);
+    assert.deepEqual([junction.fx, junction.fy], [170, 200]);
+    assert.deepEqual({ x: junction.x, y: junction.y }, activePosition, "Animated dragging leaves movement to d3 ticks");
+    renderer.endNodeDrag(junction, 0);
+    assert.equal(renderer.simulation.alphaTarget(), 0);
+    assert.deepEqual([junction.fx, junction.fy], [null, null]);
+  } finally {
+    renderer.simulation.stop();
+  }
+});
+
+test("2D middle-click centers entities and junctions through the real zoom behavior without changing layout", async () => {
+  const entity = { ...node("a", 120, 180), vx: 0.2, vy: -0.1, fx: 120, fy: 180 };
+  const junction = { ...node("junction", 250, 270), relation: explicitRelation(), vx: -0.1, vy: 0.2 };
+  const renderer = fixture2D(settings({}, { animate: false }), [], [entity, junction], entity);
+  const positions = renderer.nodes.map(({ x, y, vx, vy, fx, fy }) => ({ x, y, vx, vy, fx, fy }));
+  renderer.canvas = new EventTarget();
+  renderer.canvas.getBoundingClientRect = () => ({ left: 30, top: 40 });
+  renderer.transform = renderer.canvas.__zoom = zoomIdentity.translate(43, -51).scale(1.75);
+  renderer.tooltip = { style: { display: "block" } };
+  renderer.simulation = { restart() { throw new Error("Camera focus restarted the layout"); } };
+  renderer.app = { workspace: { openLinkText() { throw new Error("Middle-click opened a note"); } } };
+  renderer.zoomBehavior = zoom().extent([[0, 0], [800, 600]])
+    .on("zoom", event => { renderer.transform = event.transform; renderer.render(); });
+
+  for (const target of [entity, junction]) {
+    const event = {
+      button: 1, clientX: 30 + target.x * renderer.transform.k + renderer.transform.x,
+      clientY: 40 + target.y * renderer.transform.k + renderer.transform.y,
+      prevented: 0, stopped: 0,
+      preventDefault() { this.prevented++; }, stopPropagation() { this.stopped++; },
+    };
+    renderer.onMiddleMouseDown(event);
+    const ended = new Promise(resolve => renderer.zoomBehavior.on("end.focus-test", resolve));
+    renderer.onAuxClick(event);
+    await ended;
+    assert.equal(event.prevented, 2, "Node press and auxiliary click cancel browser autoscroll");
+    assert.equal(event.stopped, 1);
+    assert.equal(renderer.transform.k, 1.75);
+    assert.ok(Math.abs(target.x * renderer.transform.k + renderer.transform.x - 400) < 1e-8);
+    assert.ok(Math.abs(target.y * renderer.transform.k + renderer.transform.y - 300) < 1e-8);
+    assert.strictEqual(renderer.canvas.__zoom, renderer.transform, "Later zoom gestures use the focused transform");
+    assert.equal(renderer.hoveredNode, null);
+    assert.equal(renderer.tooltip.style.display, "none");
+    assert.deepEqual(renderer.nodes.map(({ x, y, vx, vy, fx, fy }) => ({ x, y, vx, vy, fx, fy })), positions);
+  }
+});
+
+test("2D middle-click ignores other buttons, empty space, and disposed renderers", () => {
+  const renderer = fixture2D(settings(), [], [node("a", 100, 100)]);
+  renderer.canvas = { getBoundingClientRect: () => ({ left: 30, top: 40 }) };
+  renderer.focusNode = () => { throw new Error("Unexpected camera focus"); };
+  const event = button => ({
+    button, clientX: 130, clientY: 140,
+    preventDefault() { throw new Error("Unrelated gesture was cancelled"); },
+    stopPropagation() { throw new Error("Unrelated gesture was intercepted"); },
+  });
+  for (const button of [0, 2]) {
+    renderer.onMiddleMouseDown(event(button));
+    renderer.onAuxClick(event(button));
+  }
+  renderer.onMiddleMouseDown({ ...event(1), clientX: 500 });
+  renderer.onAuxClick(event(1)); // A background press released over a node is not a click on that node.
+  renderer.onMiddleMouseDown({ ...event(1), preventDefault() {} });
+  renderer.trackMiddleClick({ ...event(1), clientX: 140 });
+  renderer.trackMiddleClick(event(1));
+  renderer.onAuxClick(event(1)); // Returning to the initial point is still a drag.
+  renderer.destroyed = true;
+  renderer.onAuxClick(event(1));
+});
+
+test("3D middle-click preserves camera offset and layout while middle-drag remains navigation", () => {
+  const renderer = Object.create(GraphRenderer3D.prototype);
+  const target = { ...node("a", 20, -10), z: 30, vx: 0.2, vy: -0.1, vz: 0.3, fx: 20 };
+  const original = { ...target };
+  const focusCalls = [];
+  renderer.destroyed = false;
+  renderer.middleClick = null;
+  renderer.pickNodeAt = x => x < 200 ? target : null;
+  renderer.graph = {
+    graphData: () => ({ nodes: [target] }),
+    controls: () => ({ target: { x: 10, y: 15, z: 20 } }),
+    cameraPosition(...args) {
+      if (!args.length) return { x: 100, y: 60, z: 80 };
+      focusCalls.push(args);
+    },
+    d3ReheatSimulation() { throw new Error("Focus restarted the layout"); },
+  };
+  const event = (button, x = 100, y = 100, pointerId = 1) => ({
+    button, clientX: x, clientY: y, pointerId, prevented: 0,
+    preventDefault() { this.prevented++; },
+    stopImmediatePropagation() { this.blockedNodeDrag = true; },
+    stopPropagation() { throw new Error("Navigation propagation was blocked"); },
+  });
+  renderer.startMiddleClick(event(0));
+  renderer.startMiddleClick(event(2));
+  assert.equal(renderer.middleClick, null);
+  renderer.startMiddleClick(event(1, 250));
+  renderer.endMiddleClick(event(1, 250));
+  assert.equal(focusCalls.length, 0, "Background clicks leave the camera alone");
+
+  const press = event(1);
+  renderer.startMiddleClick(press);
+  assert.equal(press.blockedNodeDrag, true, "Middle-button node dragging is blocked after camera navigation receives the press");
+  renderer.moveMiddleClick(event(1, 105));
+  renderer.moveMiddleClick(event(1)); // Returning to the press point is still a drag.
+  renderer.endMiddleClick(event(1));
+  assert.equal(focusCalls.length, 0, "A middle-drag never becomes a focus click");
+
+  renderer.startMiddleClick(event(1));
+  renderer.endMiddleClick(event(1, 100, 100, 2));
+  assert.equal(focusCalls.length, 0, "An unrelated pointer cannot finish the gesture");
+  renderer.endMiddleClick(event(1, 102, 100));
+  assert.deepEqual(focusCalls, [[{ x: 110, y: 35, z: 90 }, { x: 20, y: -10, z: 30 }]]);
+  assert.deepEqual(target, original, "Camera focus leaves positions, velocity and pins unchanged");
+
+  renderer.startMiddleClick(event(1));
+  renderer.graph.graphData = () => ({ nodes: [] });
+  renderer.endMiddleClick(event(1));
+  assert.equal(focusCalls.length, 1, "A node removed during the gesture is not focused");
+  renderer.destroyed = true;
+  renderer.focusNode(target);
+  assert.equal(focusCalls.length, 1);
+});
+
+test("3D middle-click raycasts current displayed nodes, including child wireframes", () => {
+  const THREE = require("three");
+  const renderer = Object.create(GraphRenderer3D.prototype);
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+  camera.position.z = 10;
+  camera.lookAt(0, 0, 0);
+  const scene = new THREE.Scene();
+  const near = node("near", 0, 0), far = node("far", 0, 0);
+  const nearGroup = new THREE.Group();
+  const sphere = new THREE.SphereGeometry(1);
+  const nearMesh = new THREE.LineSegments(new THREE.WireframeGeometry(sphere), new THREE.LineBasicMaterial());
+  sphere.dispose();
+  nearGroup.add(nearMesh);
+  nearGroup.position.z = 2;
+  nearGroup.__graphObjType = "node";
+  nearGroup.__data = near;
+  near.__threeObj = nearGroup;
+  const farMesh = new THREE.Mesh(new THREE.SphereGeometry(1), new THREE.MeshBasicMaterial());
+  farMesh.position.x = 0.2; // Avoid a ray exactly on the sphere's tessellation seam.
+  farMesh.__graphObjType = "node";
+  farMesh.__data = far;
+  far.__threeObj = farMesh;
+  scene.add(nearGroup, farMesh);
+  renderer.THREE = THREE;
+  renderer.focusCanvas = { getBoundingClientRect: () => ({ left: 30, top: 40, width: 200, height: 200 }) };
+  renderer.graph = { camera: () => camera, scene: () => scene, graphData: () => ({ nodes: [near, far] }) };
+  try {
+    assert.strictEqual(renderer.pickNodeAt(130, 140), near, "The closest displayed node wins, without hover state");
+    nearGroup.visible = false;
+    assert.strictEqual(renderer.pickNodeAt(130, 140), far, "Hidden nodes are ignored");
+    assert.equal(renderer.pickNodeAt(31, 41), null, "Empty space is not a node");
+  } finally {
+    nearMesh.geometry.dispose(); nearMesh.material.dispose();
+    farMesh.geometry.dispose(); farMesh.material.dispose();
   }
 });

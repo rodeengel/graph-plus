@@ -21,6 +21,7 @@ src/
   main.ts              Plugin entry point and saved-setting migration
   types.ts             Interfaces, semantic link config, defaults, declarative settings schema
   linkParser.ts        Vault parsing, filtering, query matching
+  semanticGraph.ts     Frozen authored records and standard/junction projections
   graphView.ts         ItemView panel with semantic relationship editor
   graphRenderer2D.ts   Canvas + d3-force renderer
   graphRenderer3D.ts   WebGL renderer via 3d-force-graph
@@ -34,10 +35,13 @@ styles.css             All CSS
 Vault files
     |
     v
-linkParser.buildGraphData()    Parse all markdown files into nodes + typed links
+linkParser.buildGraphData()    Parse ordinary links + opt-in relation metadata
     |
     v
-GraphData { nodes, links }     Full unfiltered graph
+GraphData { nodes, links, semantic }  Full standard graph + frozen semantic model
+    |
+    v
+semanticGraph.projectGraphData()     Junction 2D or standard note projection
     |
     v
 linkParser.filterGraphData()   Apply visibility, search, orphan filters
@@ -52,6 +56,8 @@ GraphRenderer2D / 3D           Renders to canvas / WebGL
 Relationship styling and physics are looked up by `link.type` in `settings.linkTypes`.
 
 Effective link spring strength multiplies the global base by per-type attraction, with a ceiling of 2 to prevent unstable D3 layouts at the upper ends of both sliders. Zero attraction remains zero.
+
+Unordered membership divides that bounded spring budget by the complete authored member count and suppresses arrows and directional forces. Preferred distance is participant-to-junction distance (participant-to-source-note in standard views). See [Explicit hyperrelations](docs/hyperrelations.md) for syntax and limitations.
 
 ## Semantic Link Configuration
 
@@ -116,18 +122,22 @@ Reads all markdown files in the vault and produces a `GraphData` object.
 
 **Key functions:**
 
-- `buildGraphData()` — full vault scan, returns all nodes and links
+- `buildGraphData()` — full vault scan, returns standard nodes/links plus frozen semantic entities, ordinary links, explicit relations, and diagnostics
 - `filterGraphData()` — applies visibility settings, search query, orphan filter
 - `matchesQuery()` — tests a node against a query string (`path:`, `file:`, `tag:#`, `[prop:val]`, negation, bare text)
 - `assignCurvatures()` — assigns curvature offsets to parallel edges between the same node pair
 - `applyNodeGroups()` — colors nodes by matching against group queries
 - `ensureLinkType()` — assigns a color and complete semantic defaults to newly discovered relationship types
 
+### `semanticGraph.ts`
+
+Creates deeply frozen copies of authored data independently of simulation coordinates and endpoint mutation. `projectGraphData()` creates a fresh standard or junction projection. Valid relationship notes become one labelled junction in 2D junction mode; standard 2D and 3D retain their actual source-note nodes and incidence connections. Membership is stored once as an explicit relation record, not as invented pairwise facts.
+
 ### `graphView.ts`
 
 The `ItemView` subclass that owns the UI.
 
-- **Sidebar** — overlay panel with search, filters, relationship types, display settings, forces, groups, profiles
+- **Sidebar** — overlay panel with search, filters, relationship types, relation inspection/diagnostics, display settings, forces, groups, profiles
 - **Relationship editor** — per-type controls for style, width, opacity, arrows, distance and attraction
 - **Renderer management** — creates/destroys the active 2D or 3D renderer, pushes filtered data to it
 - **Vault event listeners** — listens for file create/delete/rename/metadata changes and debounces rebuilds (500 ms)

@@ -112,12 +112,17 @@ function fixture(overrides = {}) {
   const files = [{ path: "A.md", basename: "A" }, { path: "B.md", basename: "B" }];
   const notes = { "A.md": "rel:: [[B]]", "B.md": "" };
   const leaves = [];
+  const caches = {};
+  const opened = [];
   let reads = 0;
   const app = {
-    workspace: { getLeavesOfType(type) { assert.equal(type, VIEW_TYPE); return leaves; } },
+    workspace: {
+      getLeavesOfType(type) { assert.equal(type, VIEW_TYPE); return leaves; },
+      openLinkText(...args) { opened.push(args); },
+    },
     vault: { getMarkdownFiles: () => files, async cachedRead(file) { reads++; return notes[file.path]; } },
     metadataCache: {
-      getFileCache: () => null,
+      getFileCache: (file) => caches[file.path] ?? null,
       getFirstLinkpathDest: (link) => files.find((file) => file.basename === link),
     },
   };
@@ -146,7 +151,7 @@ function fixture(overrides = {}) {
     assert.ok(result, `Missing ${kind} control for ${name}`);
     return result;
   }
-  return { settings, view, tab, calls, control, saved, notes, reads: () => reads, sidebarRefreshes: () => sidebarRefreshes };
+  return { settings, view, tab, calls, control, saved, notes, files, caches, opened, reads: () => reads, sidebarRefreshes: () => sidebarRefreshes };
 }
 
 function realSidebar(f) {
@@ -342,4 +347,89 @@ test("settings-tab group changes recolor open renderers without resetting their 
   assert.equal(f.reads(), 0);
   assert.deepEqual(f.calls.map((call) => call.effect), ["groups", "groups", "groups", "groups"]);
   assert.deepEqual(f.settings.nodeGroups, [{ query: "file:B", color: "#abcdef" }]);
+});
+
+function relationFixture() {
+  const f = fixture();
+  f.files.push({ path: "C.md", basename: "C" }, { path: "Triad.md", basename: "Triad" });
+  f.notes["C.md"] = "";
+  f.notes["Triad.md"] = "[[A]] [[B]] [[C]]";
+  f.caches["Triad.md"] = { frontmatter: {
+    graph_kind: "relation", graph_id: "triad", relation_type: "alliance", ordered: false,
+    members: ["[[A]]", "[[B]]", "[[C]]"],
+  } };
+  return f;
+}
+
+test("relation inspection retains full authored membership through filtering and opens the source note", async () => {
+  const f = relationFixture();
+  const panel = realSidebar(f);
+  await section(panel, "Relationship Types").header.fire("click");
+  await section(panel, "Groups").header.fire("click");
+  await f.view.rebuildGraph();
+  f.settings.searchQuery = "file:Triad";
+  f.view.pushDataToRenderer();
+  const displayed = f.calls.filter(call => call.mode === "2d" && call.effect === "data").at(-1).data;
+  assert.equal(displayed.nodes.length, 1);
+  assert.equal(displayed.links.length, 0);
+  panel.style.display = "none";
+  f.view.sidebarVisible = false;
+  f.view.selectRelation(f.view.fullData.semantic.relations[0]);
+  const content = section(panel, "Relations").content;
+  const details = content.find(element => element.cls === "gps-relation-details");
+  assert.equal(panel.style.display, "");
+  assert.equal(content.style.display, "");
+  assert.ok(details.find(element => element.text === "ID: triad"));
+  assert.ok(details.find(element => element.text === "Type: alliance"));
+  assert.deepEqual(details.find(element => element.tag === "ul").children.map(element => element.text), ["A.md", "B.md", "C.md"]);
+  await details.find(element => element.text === "Open source note").fire("click");
+  assert.deepEqual(f.opened, [["Triad.md", "", "tab"]]);
+  assert.equal(section(panel, "Relationship Types").content.style.display, "none");
+  assert.equal(section(panel, "Groups").content.style.display, "");
+  panel.scrollTop = 200;
+  const unchanged = section(panel, "Relations").content.children;
+  await f.view.rebuildGraph();
+  assert.strictEqual(section(panel, "Relations").content.children, unchanged, "Unchanged metadata does not rebuild the inspector");
+  assert.equal(panel.scrollTop, 200);
+});
+
+test("2D projection toggles route only to 2D while 3D keeps the standard note projection", async () => {
+  const f = relationFixture();
+  await f.view.rebuildGraph();
+  const data2D = f.calls.find(call => call.mode === "2d" && call.effect === "data").data;
+  const data3D = f.calls.find(call => call.mode === "3d" && call.effect === "data").data;
+  assert.equal(data2D.nodes.filter(node => node.relation).length, 1);
+  assert.ok(!data2D.nodes.some(node => node.id === "Triad.md"));
+  assert.ok(data3D.nodes.some(node => node.id === "Triad.md"));
+  assert.equal(data3D.nodes.filter(node => node.relation).length, 0);
+  assert.equal(data3D.links.filter(link => link.kind === "membership").length, 3);
+  f.calls.length = 0;
+  await f.control("Relationship junctions", "toggle").change(false);
+  assert.deepEqual(f.calls.map(call => [call.mode, call.effect]), [["2d", "data"]]);
+  assert.ok(f.calls[0].data.nodes.some(node => node.id === "Triad.md"));
+  assert.equal(f.reads(), 4, "Projection toggling does not reread source notes");
+  f.view.renderer2D = null;
+  f.calls.length = 0;
+  await f.control("Relationship junctions", "toggle").change(true);
+  assert.deepEqual(f.calls, [], "An open 3D layout is untouched by a 2D-only setting");
+});
+
+test("profiles restore the projection toggle with relationship settings after a JSON reload", async () => {
+  const f = relationFixture();
+  await f.view.rebuildGraph();
+  f.settings.hypergraph2D = false;
+  Object.assign(f.settings.linkTypes.alliance, { attraction: 0.3, distanceMultiplier: 1.8, lineStyle: "dotted" });
+  const parent = new HostElement();
+  f.view.buildProfileEditor(parent);
+  parent.find(element => element.placeholder === "Profile name").value = "standard";
+  await parent.find(element => element.text === "Save").fire("click");
+  const stored = copy(f.settings.profiles[0]);
+  f.settings.hypergraph2D = true;
+  Object.assign(f.settings.linkTypes.alliance, { attraction: 2, distanceMultiplier: 1, lineStyle: "solid" });
+  await f.view.loadProfile(stored);
+  assert.equal(f.settings.hypergraph2D, false);
+  assert.equal(f.settings.linkTypes.alliance.attraction, 0.3);
+  assert.equal(f.settings.linkTypes.alliance.distanceMultiplier, 1.8);
+  assert.equal(f.settings.linkTypes.alliance.lineStyle, "dotted");
+  assert.ok(f.calls.filter(call => call.mode === "2d" && call.effect === "data").at(-1).data.nodes.some(node => node.id === "Triad.md"));
 });

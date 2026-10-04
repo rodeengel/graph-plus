@@ -1,5 +1,47 @@
 import type { SimulationNodeDatum, SimulationLinkDatum } from "d3-force";
 
+/** Authored meaning, kept independent of mutable force/rendering objects. */
+export interface SemanticEntity {
+  readonly id: string;
+  readonly name: string;
+  readonly tags: readonly string[];
+  readonly isAttachment: boolean;
+  readonly exists: boolean;
+  readonly properties: Readonly<Record<string, readonly string[]>>;
+}
+
+export interface SemanticLink {
+  readonly id: string;
+  readonly source: string;
+  readonly target: string;
+  readonly type: string;
+  readonly sourcePath: string;
+}
+
+export interface ExplicitRelation {
+  readonly id: string;
+  readonly type: string;
+  readonly ordered: false;
+  readonly members: readonly string[];
+  readonly sourcePath: string;
+  readonly sourceName: string;
+}
+
+export interface RelationDiagnostic {
+  readonly code: string;
+  readonly severity: "error" | "warning";
+  readonly message: string;
+  readonly sourcePath: string;
+  readonly relationId?: string;
+}
+
+export interface SemanticGraph {
+  readonly entities: readonly SemanticEntity[];
+  readonly links: readonly SemanticLink[];
+  readonly relations: readonly ExplicitRelation[];
+  readonly diagnostics: readonly RelationDiagnostic[];
+}
+
 export interface GraphNode extends SimulationNodeDatum {
   id: string;     // file path
   name: string;   // basename without extension
@@ -9,6 +51,7 @@ export interface GraphNode extends SimulationNodeDatum {
   groupColor?: string;  // color from first matching group
   properties: Record<string, string[]>; // frontmatter properties for query matching
   linkCount?: number;   // number of visible links (set during filtering)
+  relation?: ExplicitRelation; // present only on a projected relationship junction
 }
 
 export interface GraphLink extends SimulationLinkDatum<GraphNode> {
@@ -16,11 +59,15 @@ export interface GraphLink extends SimulationLinkDatum<GraphNode> {
   target: string | GraphNode;
   type: string;
   curvature: number; // 0 = straight, ±offset for parallel edges
+  kind?: "membership";
+  relationId?: string;
+  memberCount?: number;
 }
 
 export interface GraphData {
   nodes: GraphNode[];
   links: GraphLink[];
+  semantic?: SemanticGraph;
 }
 
 export type LinkLineStyle = "solid" | "dashed" | "dotted";
@@ -62,6 +109,18 @@ export const MAX_EFFECTIVE_LINK_STRENGTH = 2;
 /** Keep strong multiplier combinations stable when d3 reheats to alpha 1. */
 export function getEffectiveLinkStrength(baseStrength: number, attraction: number): number {
   return Math.min(MAX_EFFECTIVE_LINK_STRENGTH, Math.max(0, baseStrength * Math.max(0, attraction)));
+}
+
+/**
+ * One relation has a bounded total spring budget, shared equally by its members.
+ * Distance remains the preferred participant-to-junction distance. This is a
+ * layout convention, not a physical model or a claim about hypergraph physics.
+ */
+export function getMembershipLinkStrength(baseStrength: number, attraction: number, memberCount: number): number {
+  const base = Number.isFinite(baseStrength) ? Math.max(0, baseStrength) : 0;
+  const multiplier = Number.isFinite(attraction) ? Math.max(0, attraction) : 0;
+  const count = Number.isFinite(memberCount) ? Math.max(2, Math.floor(memberCount)) : 2;
+  return getEffectiveLinkStrength(base, multiplier) / count;
 }
 
 export function createLinkTypeConfig(
@@ -130,6 +189,7 @@ export interface GraphLinkTypesSettings {
   linkTypes: Record<string, LinkTypeConfig>;
   showLabels: boolean;
   showNodeLabels: boolean;
+  hypergraph2D: boolean;
   showUntyped: boolean;
   defaultMode: "2d" | "3d";
   nodeSize: number;
@@ -161,6 +221,7 @@ export const DEFAULT_SETTINGS: GraphLinkTypesSettings = {
   linkTypes: {},
   showLabels: false,
   showNodeLabels: true,
+  hypergraph2D: true,
   showUntyped: true,
   defaultMode: "2d",
   nodeSize: 5,
@@ -222,6 +283,7 @@ export const SETTING_DEFS: SettingDef[] = [
   { key: "linkThickness", label: "Base link thickness", desc: "Base width of graph edges before per-type width multipliers (0.5–10)", section: "display", type: "slider", min: 0.5, max: 10, step: 0.5, effect: "visual", renderers: "both" },
 
   // 2D Display
+  { key: "hypergraph2D", label: "Relationship junctions", desc: "Show explicit multi-member relations as junctions in 2D; disable for the standard note graph", section: "display2d", type: "toggle", effect: "rebuild", renderers: "2d" },
   { key: "showLabels", label: "Edge labels", desc: "Display link type names on edges", section: "display2d", type: "toggle", effect: "visual", renderers: "2d" },
   { key: "showNodeLabels", label: "Node labels", desc: "Display node names when zoomed in", section: "display2d", type: "toggle", effect: "visual", renderers: "2d" },
   { key: "textFadeThreshold", label: "Node label zoom", desc: "Zoom level at which node labels appear (0.1–5)", section: "display2d", type: "slider", min: 0.1, max: 5, step: 0.1, effect: "visual", renderers: "2d" },

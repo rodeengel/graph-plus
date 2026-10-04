@@ -464,3 +464,52 @@
 .gps-context-menu-item:hover {
   background: var(--background-modifier-hover);
 }
+
+/* Authored relation inspection uses the same Obsidian theme and sidebar density. */
+.gps-relation-select {
+  display: block;
+  max-width: 100%;
+  margin: 4px 0;
+  padding: 4px 8px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.gps-relation-select[aria-pressed="true"] {
+  border-color: var(--interactive-accent);
+}
+
+.gps-relation-select:focus-visible,
+.gps-relation-details button:focus-visible,
+.gps-relation-diagnostic button:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+
+.gps-relation-details,
+.gps-relation-diagnostic {
+  margin-top: 8px;
+  padding: 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}
+
+.gps-relation-details ul {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
+.gps-relation-diagnostic {
+  border-left-color: var(--text-warning);
+}
+
+.gps-relation-diagnostic button {
+  margin-top: 4px;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
