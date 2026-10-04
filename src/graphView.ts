@@ -483,7 +483,7 @@ export class GraphLinkTypesView extends ItemView {
     });
   }
 
-  private buildToggle(  private buildToggle(
+  private buildToggle(
     parent: HTMLElement,
     label: string,
     value: boolean,
