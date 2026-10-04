@@ -8,6 +8,8 @@ import {
   NodeGroup,
   COLOR_PALETTE,
   UNTYPED_LINK_KEY,
+  createLinkTypeConfig,
+  normalizeLinkTypeConfig,
 } from "./types";
 
 // Matches [[wikilink]] or [[wikilink|alias]]
@@ -213,14 +215,17 @@ export function ensureLinkType(
   settings: GraphLinkTypesSettings,
   type: string
 ): void {
-  if (settings.linkTypes[type]) return;
+  if (settings.linkTypes[type]) {
+    normalizeLinkTypeConfig(settings.linkTypes[type]);
+    return;
+  }
   const usedColors = new Set(
     Object.values(settings.linkTypes).map((c: LinkTypeConfig) => c.color)
   );
   const color =
     COLOR_PALETTE.find((c) => !usedColors.has(c)) ??
     COLOR_PALETTE[Object.keys(settings.linkTypes).length % COLOR_PALETTE.length];
-  settings.linkTypes[type] = { color, visible: true };
+  settings.linkTypes[type] = createLinkTypeConfig(color);
 }
 
 /**
