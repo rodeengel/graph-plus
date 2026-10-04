@@ -14,6 +14,7 @@ const bundle = esbuild.buildSync({
     contents: [
       'export { GraphRenderer3D } from "./src/graphRenderer3D";',
       'export { SpatialLink3D } from "./src/spatialLink3D";',
+      'export { SpatialEnclosure3D, buildSpatialEnclosureGeometry } from "./src/spatialEnclosure3D";',
       'export { DEFAULT_SETTINGS, createLinkTypeConfig } from "./src/types";',
       'export { createSemanticGraph, projectGraphData, relationJunctionId } from "./src/semanticGraph";',
       'export { default as ThreeForceGraph } from "three-forcegraph";',
@@ -42,7 +43,8 @@ finally {
   if (priorWindow === undefined) delete global.window;
   else global.window = priorWindow;
 }
-const { GraphRenderer3D, SpatialLink3D, DEFAULT_SETTINGS, createLinkTypeConfig, createSemanticGraph,
+const { GraphRenderer3D, SpatialLink3D, SpatialEnclosure3D, buildSpatialEnclosureGeometry,
+  DEFAULT_SETTINGS, createLinkTypeConfig, createSemanticGraph,
   projectGraphData, relationJunctionId, ThreeForceGraph,
   TrackballControls, THREE } = compiled.exports;
 
@@ -166,6 +168,7 @@ async function fixture(run, overrides = {}, beforeReady) {
   finally {
     renderer.destroyed = true;
     renderer.disposeSpatialLinks();
+    renderer.disposeSpatialEnclosures();
     controls.dispose();
     engine.graphData({ nodes: [], links: [] }); await digest();
     for (const [key, value] of Object.entries(previous)) {
@@ -702,5 +705,267 @@ test("3D junction activation exposes full immutable membership and uses source-n
     assert.deepEqual([junction.vx, junction.vy, junction.vz, alice.vx, alice.vy, alice.vz], before,
       "Directional force rules must not invent directed incidence behavior");
     realLinkForce.links(oldLinks);
+  });
+});
+
+function enclosureFaces(geometry, matrix) {
+  assert.ok(geometry instanceof THREE.BufferGeometry);
+  const position = geometry.getAttribute("position");
+  assert.ok(position.count >= 12 && position.count % 3 === 0);
+  assert.ok(position.array.every(Number.isFinite));
+  const vertices = Array.from({ length: position.count }, (_, index) => {
+    const point = sampledPoint(position, index);
+    return matrix ? point.applyMatrix4(matrix) : point;
+  });
+  const center = vertices.reduce((sum, point) => sum.add(point), new THREE.Vector3()).multiplyScalar(1 / vertices.length);
+  const count = geometry.index?.count ?? position.count;
+  let volume = 0;
+  const faces = [];
+  for (let index = 0; index < count; index += 3) {
+    const points = [0, 1, 2].map(offset => vertices[geometry.index ? geometry.index.getX(index + offset) : index + offset]);
+    const [a, b, c] = points;
+    const normal = b.clone().sub(a).cross(c.clone().sub(a));
+    assert.ok(normal.length() > 1e-7, "Padded participant solids produce usable spatial hull triangles");
+    volume += Math.abs(a.clone().sub(center).dot(b.clone().sub(center).cross(c.clone().sub(center)))) / 6;
+    normal.normalize();
+    if (normal.dot(center.clone().sub(a)) > 0) normal.negate();
+    faces.push({ normal, point: a });
+  }
+  assert.ok(Number.isFinite(volume) && volume > 1e-3, "An enclosure has actual xyz volume, including degenerate participant layouts");
+  return { faces, volume, center };
+}
+
+function assertEncloses(geometry, members, padding = 12, matrix) {
+  const { faces, volume } = enclosureFaces(geometry, matrix);
+  for (const member of members) {
+    const center = new THREE.Vector3(member.x, member.y, member.z);
+    const radius = Math.max(0, member.radius ?? 0) + padding;
+    for (const face of faces) {
+      const distance = face.normal.dot(center.clone().sub(face.point));
+      assert.ok(distance <= -radius + 1e-3,
+        `${member.id}: every hull face contains the full participant solid plus padding (distance=${distance}, radius=${radius})`);
+    }
+  }
+  return volume;
+}
+
+function enclosureObject(f, relationId) {
+  const enclosure = f.renderer.spatialEnclosures.get(relationId);
+  assert.ok(enclosure instanceof SpatialEnclosure3D);
+  assert.equal(enclosure.group.name, "gps-spatial-enclosure");
+  assert.strictEqual(enclosure.group.parent, f.renderer.graph.scene());
+  const shell = enclosure.group.getObjectByName("gps-spatial-enclosure-shell");
+  assert.ok(shell instanceof THREE.Mesh);
+  enclosure.group.updateMatrixWorld(true);
+  return { enclosure, shell };
+}
+
+function displayedSolids(f, relation) {
+  const nodes = f.engine.graphData().nodes;
+  return f.renderer.getDisplayedMemberIds(relation).map(id => {
+    const node = nodes.find(node => node.id === id);
+    return { id, x: node.x, y: node.y, z: node.z,
+      radius: Math.cbrt(f.renderer.getNodeVal(node)) * f.settings.nodeRelSize3D * (node.relation ? 1.25 : 1) };
+  });
+}
+
+test("padded Three convex enclosures retain volume and contain full participant solids for spatial, planar, collinear, coincident and sparse layouts", () => {
+  const point = (id, x, y, z, radius = 4) => Object.freeze({ id, x, y, z, radius });
+  const cases = [
+    [point("a", 0, 0, 0, 2), point("b", 70, 0, 0, 5), point("c", 0, 80, 0, 3), point("d", 0, 0, 90, 8)],
+    [point("a", -40, -25, 13), point("b", 65, -15, 13), point("c", 10, 75, 13, 10)],
+    [point("a", -40, -80, -120), point("b", 0, 0, 0, 12), point("c", 40, 80, 120)],
+    [point("a", 20, -15, 30, 2), point("b", 20, -15, 30, 16)],
+    [point("a", -50, 20, 70), point("b", 80, 75, -30)],
+    [point("a", 3, -7, 9, 0)],
+  ];
+  for (const members of cases) {
+    const frozen = Object.freeze(members);
+    const before = structuredClone(frozen);
+    const geometry = buildSpatialEnclosureGeometry(frozen);
+    try { assertEncloses(geometry, frozen); }
+    finally { geometry?.dispose(); }
+    assert.deepEqual(frozen, before, "Hull construction cannot mutate authored participants or their render positions");
+  }
+  assert.equal(buildSpatialEnclosureGeometry([]), null);
+  const invalid = [point("nan", NaN, 0, 0), point("infinity", 0, Infinity, 0), point("missing-z", 0, 0, undefined)];
+  assert.equal(buildSpatialEnclosureGeometry(invalid), null, "No finite spatial participants means no invented enclosure");
+  const valid = point("valid", 10, 20, 30, 4);
+  const mixed = buildSpatialEnclosureGeometry([...invalid, valid]);
+  try { assertEncloses(mixed, [valid]); }
+  finally { mixed?.dispose(); }
+});
+
+test("enclosure helper caches quiet/member-order changes, preserves filtered and drawable counts, rejects pointer hits, and disposes replacements once", () => {
+  const members = [
+    { id: "a", x: -30, y: 0, z: 20, radius: 4 },
+    { id: "b", x: 60, y: 40, z: -25, radius: 7 },
+  ];
+  const enclosure = new SpatialEnclosure3D("#00bcd4", 0.06);
+  assert.equal(enclosure.updateMembers(members, 5), true);
+  const shell = enclosure.group.getObjectByName("gps-spatial-enclosure-shell");
+  const originalGeometry = shell.geometry, material = shell.material;
+  let originalDisposals = 0, materialDisposals = 0, replacementDisposals = 0;
+  originalGeometry.addEventListener("dispose", () => originalDisposals++);
+  material.addEventListener("dispose", () => materialDisposals++);
+  try {
+    assertEncloses(originalGeometry, members);
+    assert.equal(enclosure.updateMembers([...members].reverse(), 8), false);
+    assert.strictEqual(shell.geometry, originalGeometry);
+    assert.equal(enclosure.group.userData.authoredMemberCount, 8);
+    assert.equal(enclosure.group.userData.geometryMemberCount, 2);
+    assert.deepEqual([...enclosure.group.userData.geometryMemberIds].sort(), ["a", "b"]);
+    enclosure.updateAppearance("#e654ab", 0.12, true);
+    assert.strictEqual(shell.geometry, originalGeometry);
+    assert.strictEqual(shell.material, material);
+    assert.equal(shell.material.opacity, 0.12);
+    assert.equal(shell.material.depthWrite, false);
+    enclosure.group.updateMatrixWorld(true);
+    originalGeometry.computeBoundingSphere();
+    const { center } = enclosureFaces(originalGeometry);
+    const ray = new THREE.Raycaster(center.clone().add(new THREE.Vector3(originalGeometry.boundingSphere.radius * 2 + 20, 0, 0)), new THREE.Vector3(-1, 0, 0));
+    const rawHits = [];
+    THREE.Mesh.prototype.raycast.call(shell, ray, rawHits);
+    assert.ok(rawHits.length > 0, "The test ray crosses the actual convex shell geometry");
+    assert.equal(ray.intersectObject(enclosure.group, true).length, 0, "A selected enclosure adds no hit surface or ghost pointer target");
+    enclosure.updateAppearance("#00bcd4", 0, false);
+    assert.equal(ray.intersectObject(enclosure.group, true).length, 0);
+    const moved = members.map(member => ({ ...member, z: member.z + 15 }));
+    assert.equal(enclosure.updateMembers(moved, 8), true);
+    assert.equal(originalDisposals, 1);
+    assert.notStrictEqual(shell.geometry, originalGeometry);
+    shell.geometry.addEventListener("dispose", () => replacementDisposals++);
+    assertEncloses(shell.geometry, moved);
+    assert.equal(enclosure.updateMembers([...moved, { id: "unready", x: NaN, y: 0, z: 0, radius: 4 }], 8), false,
+      "Unready coordinates alter inspector counts separately from drawable hull geometry");
+    assert.equal(enclosure.group.userData.geometryMemberCount, 2);
+  } finally {
+    enclosure.dispose(); enclosure.dispose();
+  }
+  assert.equal(originalDisposals, 1);
+  assert.equal(replacementDisposals, 1);
+  assert.equal(materialDisposals, 1);
+  assert.equal(enclosure.group.children.length, 0);
+});
+
+test("native 3D enclosures use direct authored IDs, keep overlapping identities separate, and retain partial counts without nested flattening or inferred members", async () => {
+  const nested = authored("nested-enclosure", "Nested", "alliance", ["Triad", "Dan"]);
+  await fixture(async f => {
+    const source = fixtureData([nested]), authoredJSON = JSON.stringify(source.semantic);
+    const projected = projectGraphData(source, true);
+    await f.apply(projected);
+    assert.equal(f.renderer.spatialEnclosures.size, 4);
+    const triadObject = enclosureObject(f, triad.id);
+    const liaisonObject = enclosureObject(f, liaison.id);
+    assert.notStrictEqual(triadObject.enclosure.group, liaisonObject.enclosure.group);
+    assert.notStrictEqual(triadObject.shell.geometry, liaisonObject.shell.geometry);
+    assert.notStrictEqual(triadObject.shell.material, liaisonObject.shell.material);
+    assert.equal(triadObject.shell.material.color.getHexString(), liaisonObject.shell.material.color.getHexString());
+    const dan = f.engine.graphData().nodes.find(node => node.id === "Dan.md");
+    const triadMembers = displayedSolids(f, triad);
+    for (const axis of ["x", "y", "z"]) dan[axis] = triadMembers.reduce((sum, member) => sum + member[axis], 0) / triadMembers.length;
+    f.renderer.graph.nodeDrag(dan);
+    const { shell } = enclosureObject(f, triad.id);
+    assertEncloses(shell.geometry, [{ id: dan.id, x: dan.x, y: dan.y, z: dan.z, radius: 0 }], 0,
+      triadObject.enclosure.group.matrixWorld);
+    assert.deepEqual(triadObject.enclosure.group.userData.displayedMemberIds.sort(), ["Alice.md", "Bob.md", "Carol.md"]);
+    assert.ok(!f.renderer.getDisplayedMemberIds(triad).includes(dan.id), "Geometry containment never authors a membership");
+    f.renderer.setSelectedRelation(triad.id);
+    assert.ok(!dan.__threeObj.getObjectByName("gps-semantic-selection"));
+    const nestedObject = enclosureObject(f, nested.id);
+    assert.deepEqual(nestedObject.enclosure.group.userData.displayedMemberIds.sort(), ["Dan.md", relationJunctionId(triad.id)].sort());
+    assertEncloses(nestedObject.shell.geometry, displayedSolids(f, nested), 12, nestedObject.enclosure.group.matrixWorld);
+    const filter = visible => ({ ...projected, nodes: projected.nodes.filter(node => visible.has(node.id)),
+      links: projected.links.filter(link => visible.has(link.source) && visible.has(link.target)) });
+    for (const displayed of [2, 1, 0]) {
+      const visible = new Set(projected.nodes.filter(node => !triad.members.includes(node.id) || triad.members.slice(0, displayed).includes(node.id)).map(node => node.id));
+      await f.apply(filter(visible));
+      assert.deepEqual(f.renderer.getRelationDisplayCount(triad.id), { displayed, total: 3 });
+      if (displayed) {
+        const partial = enclosureObject(f, triad.id);
+        assert.equal(partial.enclosure.group.userData.displayedMemberCount, displayed);
+        assert.equal(partial.enclosure.group.userData.totalMemberCount, 3);
+        assert.equal(partial.enclosure.group.userData.partial, true);
+        assertEncloses(partial.shell.geometry, displayedSolids(f, triad), 12, partial.enclosure.group.matrixWorld);
+        const incidence = f.engine.graphData().links.find(link => link.relationId === triad.id);
+        assert.equal(incidence.memberCount, 3);
+        assert.equal(f.engine.d3Force("link").strength()(incidence), 0.6 / 3);
+      } else assert.ok(!f.renderer.spatialEnclosures.has(triad.id), "Zero displayed members leaves inspection intact without an enclosure");
+    }
+    f.settings.linkTypes.alliance.visible = false;
+    await f.visual();
+    assert.ok(!f.renderer.spatialEnclosures.has(nested.id));
+    assert.ok(!f.renderer.spatialEnclosures.has(liaison.id));
+    const current = f.engine.graphData();
+    const visible = new Set(current.nodes.filter(node => node.relation?.id !== tetra.id).map(node => node.id));
+    await f.apply(filter(visible));
+    assert.ok(!f.renderer.spatialEnclosures.has(tetra.id), "A filtered source junction leaves no orphan shell");
+    assert.deepEqual(f.renderer.getRelationDisplayCount(tetra.id), { displayed: 1, total: 4 });
+    assert.equal(JSON.stringify(source.semantic), authoredJSON);
+  }, { hyperrelationEnclosures3D: true });
+});
+
+test("3D enclosure toggles, independent opacity and selection preserve quiet xyz, velocities, pins, scene data, camera and springs", async () => {
+  await fixture(async f => {
+    await f.apply(projectGraphData(fixtureData(), true));
+    assert.equal(f.renderer.spatialEnclosures.size, 0);
+    const data = f.engine.graphData(), nodes = [...data.nodes], links = [...data.links];
+    nodes.forEach((node, index) => { node.vx = index * 0.02; node.vy = -index * 0.03; node.vz = index * 0.04; });
+    const pinned = nodes.find(node => node.id === "Bob.md");
+    pinned.fx = pinned.x; pinned.fy = pinned.y; pinned.fz = pinned.z;
+    const state = stateOf(nodes), camera = cameraOf(f), replacements = f.replacements(), reheats = f.reheats();
+    const linkForce = f.engine.d3Force("link"), forceLinks = linkForce.links();
+    const springs = links.map(link => [linkForce.strength()(link), linkForce.distance()(link)]);
+    const spatialLinks = links.map(link => f.renderer.spatialLinks.get(link));
+    f.settings.hyperrelationEnclosures3D = true;
+    await f.visual();
+    const original = [...f.renderer.spatialEnclosures.entries()].map(([id, enclosure]) => [id, enclosure,
+      enclosure.group.getObjectByName("gps-spatial-enclosure-shell").geometry]);
+    for (const [id] of original) {
+      const { enclosure, shell } = enclosureObject(f, id);
+      assert.equal(shell.material.opacity, 0.06);
+      assertEncloses(shell.geometry, displayedSolids(f, nodes.find(node => node.relation?.id === id).relation), 12, enclosure.group.matrixWorld);
+    }
+    f.settings.linkOpacity = 0;
+    f.settings.linkTypes.alliance.opacity = 0;
+    f.settings.enclosureFillOpacity3D = 0.12;
+    f.settings.linkTypes.alliance.color = "#e654ab";
+    await f.visual();
+    assert.equal(enclosureObject(f, triad.id).shell.material.color.getHexString(), "e654ab");
+    f.renderer.setSelectedRelation(triad.id);
+    f.engine.tickFrame();
+    for (const [id, enclosure, geometry] of original) {
+      const current = enclosureObject(f, id);
+      assert.strictEqual(current.enclosure, enclosure);
+      assert.strictEqual(current.shell.geometry, geometry, "Appearance and selection reuse quiet hull geometry");
+      assert.equal(current.shell.material.opacity, 0.12, "Enclosure fill remains independent of pairwise link opacity");
+      assert.ok(current.enclosure.group.userData.displayedMemberIds.length > 0);
+    }
+    f.settings.enclosureFillOpacity3D = 0;
+    await f.visual();
+    assert.ok([...f.renderer.spatialEnclosures.values()].every(enclosure => !enclosure.group.visible));
+    f.renderer.setSelectedRelation(null);
+    const disposed = [];
+    for (const [, enclosure, geometry] of original) {
+      let count = 0; geometry.addEventListener("dispose", () => count++);
+      disposed.push(() => count);
+    }
+    f.settings.hyperrelationEnclosures3D = false;
+    await f.visual();
+    assert.equal(f.renderer.spatialEnclosures.size, 0);
+    assert.ok(original.every(([, enclosure]) => enclosure.group.parent === null && enclosure.group.children.length === 0));
+    assert.ok(disposed.every(count => count() === 1));
+    assert.strictEqual(f.engine.graphData(), data);
+    nodes.forEach((node, index) => assert.strictEqual(data.nodes[index], node));
+    links.forEach((link, index) => {
+      assert.strictEqual(data.links[index], link);
+      assert.strictEqual(f.renderer.spatialLinks.get(link), spatialLinks[index]);
+    });
+    assert.strictEqual(linkForce.links(), forceLinks);
+    assert.deepEqual(links.map(link => [linkForce.strength()(link), linkForce.distance()(link)]), springs);
+    assert.deepEqual(stateOf(data.nodes), state);
+    assert.deepEqual(cameraOf(f), camera);
+    assert.equal(f.replacements(), replacements);
+    assert.equal(f.reheats(), reheats);
   });
 });

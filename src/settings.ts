@@ -8,6 +8,8 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
   plugin: GraphPlusSemanticPlugin;
   private regionStatusEl: HTMLElement | null = null;
   private regionControls = new Map<SettingDef["key"], { setDisabled(disabled: boolean): unknown }>();
+  private enclosureStatusEl: HTMLElement | null = null;
+  private enclosureControls = new Map<SettingDef["key"], { setDisabled(disabled: boolean): unknown }>();
   private unsubscribeRegionContext: (() => void) | null = null;
 
   constructor(app: App, plugin: GraphPlusSemanticPlugin) {
@@ -36,7 +38,9 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
     this.unsubscribeRegionContext?.();
     this.unsubscribeRegionContext = onRegionContextChange(() => this.updateRegionAvailability());
     this.regionControls.clear();
+    this.enclosureControls.clear();
     this.regionStatusEl = null;
+    this.enclosureStatusEl = null;
     containerEl.empty();
 
     new Setting(containerEl).setHeading().setName("Graph Plus Semantic");
@@ -104,6 +108,8 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).setHeading().setName("3D display");
     this.renderSettingsSection(containerEl, "display3d");
+    this.enclosureStatusEl = containerEl.createDiv({ cls: "setting-item-description" });
+    this.updateRegionAvailability();
 
     new Setting(containerEl).setHeading().setName("Filters");
     this.renderSettingsSection(containerEl, "filters");
@@ -124,7 +130,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
     // --- Relationship type styling + physics ---
     new Setting(containerEl).setHeading().setName("Relationship types");
     containerEl.createEl("p", {
-      text: "Color, line patterns, width, opacity, arrows, distance and attraction apply to 2D and 3D. Effective 3D opacity is global Link opacity x type opacity; zero hides connections and arrows while retaining membership and springs. Unordered membership is always arrowless. Relationship regions remain available only in 2D.",
+      text: "Color, line patterns, width, opacity, arrows, distance and attraction apply to 2D and 3D. Effective 3D opacity is global Link opacity x type opacity; zero hides connections and arrows while retaining membership and springs. Unordered membership is always arrowless. Optional 2D regions and 3D enclosures have independent preferences.",
       cls: "setting-item-description",
     });
 
@@ -305,6 +311,15 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
     if (this.regionStatusEl) this.regionStatusEl.textContent = reason;
     this.regionControls.get("hyperrelationRegions")?.setDisabled(!available);
     this.regionControls.get("regionFillOpacity")?.setDisabled(!available || !this.plugin.settings.hyperrelationRegions);
+
+    const enclosureContexts = views.map((view) => view.getEnclosureAvailability());
+    const enclosureAvailable = this.plugin.settings.hypergraph3D && (enclosureContexts.length ? enclosureContexts.some((context) => context.available) : this.plugin.settings.defaultMode === "3d");
+    const enclosureReason = enclosureAvailable
+      ? (enclosureContexts.length ? "Relationship enclosures are available in the open 3D junction graph." : "Relationship enclosures will be available when opening the default 3D junction graph.")
+      : (!this.plugin.settings.hypergraph3D ? "Relationship enclosures are unavailable in the standard 3D graph. Enable Relationship junctions." : "Relationship enclosures are unavailable in 2D. Open or switch a graph to 3D.");
+    if (this.enclosureStatusEl) this.enclosureStatusEl.textContent = enclosureReason;
+    this.enclosureControls.get("hyperrelationEnclosures3D")?.setDisabled(!enclosureAvailable);
+    this.enclosureControls.get("enclosureFillOpacity3D")?.setDisabled(!enclosureAvailable || !this.plugin.settings.hyperrelationEnclosures3D);
   }
 
   /** Render all settings for a section from the declarative schema */
@@ -318,6 +333,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           .setDesc(def.desc ?? "")
           .addToggle((toggle) => {
             if (def.key === "hyperrelationRegions") this.regionControls.set(def.key, toggle);
+            if (def.key === "hyperrelationEnclosures3D") this.enclosureControls.set(def.key, toggle);
             toggle.setValue(def.invert ? !raw : raw).onChange(async (value) => {
               (this.plugin.settings as any)[def.key] = def.invert ? !value : value;
               await this.saveSettings(def.effect, def.renderers, def.key);
@@ -330,6 +346,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           .setDesc(def.desc ?? "")
           .addSlider((slider) => {
             if (def.key === "regionFillOpacity") this.regionControls.set(def.key, slider);
+            if (def.key === "enclosureFillOpacity3D") this.enclosureControls.set(def.key, slider);
             slider
               .setLimits(def.min!, def.max!, def.step!)
               .setValue(def.invert ? Math.abs(raw) : raw)

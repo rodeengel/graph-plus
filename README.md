@@ -29,6 +29,7 @@ This makes it possible for two equally real relationships to have very different
   - Inline fields (e.g. `parent:: [[Note]]`, `[parent:: [[Note]]]`, `(parent:: [[Note]])`)
 - **Explicit multi-member relations** — Opt-in relationship notes retain their authored identity and unordered membership. 3D is the primary direction, with labelled junctions, shared participants, full inspection, and normalized membership springs; 2D remains an alternate view. Either renderer can use the standard note projection.
 - **Optional relationship regions** — Subtle padded enclosures behind 2D junction graphs show overlapping authored relations. Selecting a junction or relation highlights its actual displayed members; a node inside a region is not automatically a member. See [2D regions](docs/regions2d.md).
+- **Optional 3D relationship enclosures** - Passive padded hull shells around displayed direct authored members in the 3D junction graph, with independent default-off controls. A nonmember inside remains a nonmember. Slice 3 is implemented in source; isolated native acceptance remains pending. See [Native 3D semantics](docs/native3d.md).
 - **Semantic relationship styling** — Per-type color, line style, width, opacity, and arrow behavior
 - **Per-type relationship physics** — Independent distance and attraction multipliers
 - **2D and 3D rendering** — Toggle between Canvas-based 2D and WebGL 3D views
@@ -113,7 +114,7 @@ Effective spring strength is `base link force × attraction multiplier`, capped 
 
 Explicit unordered membership divides this capped attraction across the authored member count. Its connections have no arrows or directional force rules; ordinary directed links keep their existing behavior.
 
-Native 3D connections now honor solid/dashed/dotted patterns, width, and per-type opacity in scene coordinates, including curved and parallel links. Effective opacity is `global 3D Link opacity x type opacity`; zero hides the connection and its arrowheads without removing the authored relationship or its springs. Ordinary links retain inherited/on/off arrows, and unordered memberships remain arrowless. Sidebar, settings-tab, and appearance-only profile changes preserve the quiet spatial layout and camera. See [Native 3D semantics](docs/native3d.md) for the bounded scope, native evidence, and remaining enclosure work; the full 3D milestone remains incomplete.
+Native 3D connections now honor solid/dashed/dotted patterns, width, and per-type opacity in scene coordinates, including curved and parallel links. Effective opacity is `global 3D Link opacity x type opacity`; zero hides the connection and its arrowheads without removing the authored relationship or its springs. Ordinary links retain inherited/on/off arrows, and unordered memberships remain arrowless. Sidebar, settings-tab, and appearance-only profile changes preserve the quiet spatial layout and camera. Optional 3D enclosure shells have separate appearance preferences and leave authored membership and springs unchanged. See [Native 3D semantics](docs/native3d.md) for source scope, historical native evidence, and pending isolated native acceptance. Neighborhood/path work and the full 3D milestone remain incomplete.
 
 ## Advanced link forces
 
@@ -171,8 +172,7 @@ Planned directions include:
 - neighborhood/hop views
 - social / organizational / geographic / evidence projections
 - graph-derived centrality and clustering overlays
-- passive 3D relationship enclosures
-- shaded hyperrelation regions, centrality and node importance
+- broader spatial-enclosure acceptance, centrality and node importance
 - multiway evolution, rewrite rules, and possible Wolfram|Alpha integration
 
 ## Architecture

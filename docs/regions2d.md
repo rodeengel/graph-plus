@@ -2,6 +2,8 @@
 
 Enable **Relationship regions** in **2D Display**, with **Relationship junctions** on. Regions default off. **Region fill opacity** is separate from link opacity; its default is 0.08 and its range is 0–0.3. The saved preference remains available when returning from standard 2D or 3D, but regions render only in the 2D junction projection. The controls communicate this limitation.
 
+The optional [3D enclosures](native3d.md#passive-3d-relationship-enclosures) have separate saved controls and fill opacity. Switching graph mode does not copy or clear either view's preferences.
+
 Each visible junction has its own approximate enclosure around its currently displayed, directly authored participants. Its relationship-type color is reused. Regions render behind ordinary links, junctions, nodes, and labels. Same-color or identical memberships remain separate authored records, selectable through their junctions and the Relations list. Region interiors have no click or drag handlers; background panning and node interaction use the existing targets.
 
 Boundaries are approximate visual enclosures. A nonmember inside a region remains a nonmember. Selecting a relation highlights only its declared, displayed participants and its region, while the inspector retains the complete authored membership and source-note action. A nested relation note is one direct participant represented by its junction; its own participants are not added to the enclosing relation.
