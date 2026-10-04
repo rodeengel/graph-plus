@@ -124,7 +124,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
     // --- Relationship type styling + physics ---
     new Setting(containerEl).setHeading().setName("Relationship types");
     containerEl.createEl("p", {
-      text: "Each typed link can have independent appearance and layout behavior. Line style and per-type opacity are currently 2D-only; width, arrows, distance and attraction also affect 3D.",
+      text: "Color, line patterns, width, opacity, arrows, distance and attraction apply to 2D and 3D. Effective 3D opacity is global Link opacity x type opacity; zero hides connections and arrows while retaining membership and springs. Unordered membership is always arrowless. Relationship regions remain available only in 2D.",
       cls: "setting-item-description",
     });
 
@@ -167,8 +167,8 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
 
       new Setting(containerEl)
         .setName(`${displayName}: appearance`)
-        .setDesc("2D line pattern and per-type arrow behavior")
-        .addDropdown((dropdown) =>
+        .setDesc("Solid, dashed or dotted connections in both views; ordinary links inherit or override global arrows")
+        .addDropdown((dropdown) => {
           dropdown
             .addOption("solid", "Solid")
             .addOption("dashed", "Dashed")
@@ -176,9 +176,9 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
             .setValue(config.lineStyle)
             .onChange(async (value) => {
               config.lineStyle = value as LinkLineStyle;
-              await this.saveSettings("visual", "2d");
-            })
-        )
+              await this.saveSettings("visual");
+            });
+        })
         .addDropdown((dropdown) =>
           dropdown
             .addOption("inherit", "Arrow: inherit")
@@ -207,17 +207,17 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
 
       new Setting(containerEl)
         .setName(`${displayName}: opacity`)
-        .setDesc("2D relationship opacity")
-        .addSlider((slider) =>
+        .setDesc("Per-type opacity; multiplied by global Link opacity in 3D. Zero hides connections and arrows while retaining membership and springs.")
+        .addSlider((slider) => {
           slider
             .setLimits(0, 1, 0.05)
             .setValue(config.opacity)
             .setDynamicTooltip()
             .onChange(async (value) => {
               config.opacity = value;
-              await this.saveSettings("visual", "2d");
-            })
-        );
+              await this.saveSettings("visual");
+            });
+        });
 
       new Setting(containerEl)
         .setName(`${displayName}: distance`)
@@ -285,6 +285,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           this.display();
         })
     );
+    this.updateRegionAvailability();
   }
 
   hide(): void {

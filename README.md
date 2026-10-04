@@ -12,9 +12,9 @@ Each typed relationship can now independently control:
 
 - **Color**
 - **Visibility**
-- **Line style** — solid, dashed, or dotted (2D)
+- **Line style** - solid, dashed, or dotted in 2D and native 3D
 - **Width multiplier**
-- **Opacity** (2D)
+- **Opacity** - per type, multiplied by global link opacity in 3D
 - **Arrow behavior** — inherit global setting, force on, or force off
 - **Distance multiplier**
 - **Attraction multiplier**
@@ -27,12 +27,12 @@ This makes it possible for two equally real relationships to have very different
 - **Typed links** — Links are automatically extracted from:
   - Frontmatter wikilinks (e.g. `parent: [[Note]]`)
   - Inline fields (e.g. `parent:: [[Note]]`, `[parent:: [[Note]]]`, `(parent:: [[Note]])`)
-- **Explicit multi-member relations** — Opt-in relationship notes retain their authored identity and unordered membership. In 2D, each relation has a labelled diamond junction; standard 2D and 3D retain its source note and membership connections.
+- **Explicit multi-member relations** — Opt-in relationship notes retain their authored identity and unordered membership. 3D is the primary direction, with labelled junctions, shared participants, full inspection, and normalized membership springs; 2D remains an alternate view. Either renderer can use the standard note projection.
 - **Optional relationship regions** — Subtle padded enclosures behind 2D junction graphs show overlapping authored relations. Selecting a junction or relation highlights its actual displayed members; a node inside a region is not automatically a member. See [2D regions](docs/regions2d.md).
 - **Semantic relationship styling** — Per-type color, line style, width, opacity, and arrow behavior
 - **Per-type relationship physics** — Independent distance and attraction multipliers
 - **2D and 3D rendering** — Toggle between Canvas-based 2D and WebGL 3D views
-- **Middle-click focus** — Center the camera on a node at the current zoom without opening its note or moving the layout; includes 2D relationship junctions. Middle-drag zoom in 3D remains available.
+- **Middle-click focus** — Center the camera on a node or relationship junction at the current zoom without opening its note or moving the layout. Middle-drag zoom in 3D remains available, including while physics is paused.
 - **Overlay sidebar** — Tune the graph without shrinking the canvas
 - **Node groups** — Color nodes by query (path, tags, properties, filename)
 - **Advanced link forces** — Optional directional forces per relationship type
@@ -96,9 +96,9 @@ The settings are stored in plugin configuration, not written into the notes them
 | Setting | Effect |
 |---|---|
 | Color | Relationship color |
-| Style | Solid, dashed, or dotted in 2D |
+| Style | Solid, dashed, or dotted in 2D and native 3D, including curves and parallel links |
 | Width × | Multiplies the global base link thickness |
-| Opacity | Per-type 2D opacity |
+| Opacity | Per-type opacity; global 3D link opacity x type opacity in 3D |
 | Arrow | Inherit global setting, force on, or force off |
 
 ### Physics
@@ -113,7 +113,7 @@ Effective spring strength is `base link force × attraction multiplier`, capped 
 
 Explicit unordered membership divides this capped attraction across the authored member count. Its connections have no arrows or directional force rules; ordinary directed links keep their existing behavior.
 
-Width, arrow behavior, distance and attraction are also honored in 3D. Per-type dash patterns and opacity are currently 2D-first.
+Native 3D connections now honor solid/dashed/dotted patterns, width, and per-type opacity in scene coordinates, including curved and parallel links. Effective opacity is `global 3D Link opacity x type opacity`; zero hides the connection and its arrowheads without removing the authored relationship or its springs. Ordinary links retain inherited/on/off arrows, and unordered memberships remain arrowless. Sidebar, settings-tab, and appearance-only profile changes preserve the quiet spatial layout and camera. See [Native 3D semantics](docs/native3d.md) for the bounded scope, native evidence, and remaining enclosure work; the full 3D milestone remains incomplete.
 
 ## Advanced link forces
 
@@ -171,7 +171,7 @@ Planned directions include:
 - neighborhood/hop views
 - social / organizational / geographic / evidence projections
 - graph-derived centrality and clustering overlays
-- richer 3D relationship rendering
+- passive 3D relationship enclosures
 - shaded hyperrelation regions, centrality and node importance
 - multiway evolution, rewrite rules, and possible Wolfram|Alpha integration
 
