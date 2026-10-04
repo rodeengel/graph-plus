@@ -109,21 +109,15 @@ export class GraphRenderer2D {
     const dragBehavior = drag<HTMLCanvasElement, unknown>()
       .subject((event) => this.findNode(event.x, event.y))
       .on("start", (event: D3DragEvent<HTMLCanvasElement, unknown, GraphNode>) => {
-        if (!event.active) this.simulation.alphaTarget(0.3).restart();
-        event.subject.fx = event.subject.x;
-        event.subject.fy = event.subject.y;
+        this.startNodeDrag(event.subject, event.active);
       })
       .on("drag", (event: D3DragEvent<HTMLCanvasElement, unknown, GraphNode>) => {
         // Use pointer to get raw mouse position, then inverse-transform to graph space
         const [mx, my] = pointer(event.sourceEvent, this.canvas);
-        const t = this.transform;
-        event.subject.fx = (mx - t.x) / t.k;
-        event.subject.fy = (my - t.y) / t.k;
+        this.moveNodeDrag(event.subject, mx, my);
       })
       .on("end", (event: D3DragEvent<HTMLCanvasElement, unknown, GraphNode>) => {
-        if (!event.active) this.simulation.alphaTarget(0);
-        event.subject.fx = null;
-        event.subject.fy = null;
+        this.endNodeDrag(event.subject, event.active);
       });
 
     const sel = select(this.canvas);
@@ -137,14 +131,7 @@ export class GraphRenderer2D {
     document.addEventListener("click", this.dismissContextMenu);
 
     // Resize observer
-    this.resizeObserver = new ResizeObserver(() => {
-      this.updateSize();
-      const xForce = this.simulation.force("x") as any;
-      const yForce = this.simulation.force("y") as any;
-      if (xForce) xForce.x(this.width / 2);
-      if (yForce) yForce.y(this.height / 2);
-      this.simulation.alpha(0.1).restart();
-    });
+    this.resizeObserver = new ResizeObserver(() => this.handleResize());
     this.resizeObserver.observe(this.container);
   }
 
@@ -160,9 +147,17 @@ export class GraphRenderer2D {
     ]);
     const sameTopology = topologyKey === this.topologyKey;
     const previousNodes = new Map(this.nodes.map((node) => [node.id, node]));
+    const previousNodesBySource = new Map(this.nodes.map((node) => [node.relation?.sourcePath ?? node.id, node]));
+    const reusedNodes = new Set<GraphNode>();
+    const retainedIds = new Set<string>();
     const initialLoad = this.nodes.length === 0;
     const nextNodes: GraphNode[] = data.nodes.map((node) => {
-      const previous = previousNodes.get(node.id);
+      const exact = previousNodes.get(node.id);
+      const source = previousNodesBySource.get(node.relation?.sourcePath ?? node.id);
+      // A source note and its junction are representations of the same authored
+      // relation. Prefer exact entity IDs, then carry layout across projection.
+      const previous = exact && !reusedNodes.has(exact) ? exact
+        : source && !reusedNodes.has(source) ? source : undefined;
       // Layout state belongs to this renderer, never to the authored model.
       const metadata = {
         ...node,
@@ -173,6 +168,8 @@ export class GraphRenderer2D {
         relation: node.relation,
       };
       if (!previous) return metadata;
+      reusedNodes.add(previous);
+      retainedIds.add(node.id);
       const { x, y, vx, vy, fx, fy, index } = previous;
       Object.assign(previous, metadata, { x, y, vx, vy, fx, fy, index });
       return previous;
@@ -186,7 +183,7 @@ export class GraphRenderer2D {
     const nextNodesById = new Map(nextNodes.map((node) => [node.id, node]));
     const nextNodesBySource = new Map(nextNodes.map((node) => [node.relation?.sourcePath ?? node.id, node]));
     for (const node of nextNodes) {
-      if (!node.relation || previousNodes.has(node.id)) continue;
+      if (!node.relation || retainedIds.has(node.id)) continue;
       const positionedMembers = node.relation.members
         .map((id) => nextNodesBySource.get(id))
         .filter((member): member is GraphNode => !!member && Number.isFinite(member.x) && Number.isFinite(member.y));
@@ -324,6 +321,44 @@ export class GraphRenderer2D {
     this.canvas.style.width = `${this.width}px`;
     this.canvas.style.height = `${this.height}px`;
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+  }
+
+  private handleResize(): void {
+    if (this.destroyed) return;
+    this.updateSize();
+    const xForce = this.simulation.force("x") as any;
+    const yForce = this.simulation.force("y") as any;
+    if (xForce) xForce.x(this.width / 2);
+    if (yForce) yForce.y(this.height / 2);
+    // Switching tabs also resizes the canvas. A paused graph must redraw at
+    // its existing positions rather than quietly resuming its simulation.
+    if (this.settings.animate) this.simulation.alpha(0.1).restart();
+    this.render();
+  }
+
+  private startNodeDrag(node: GraphNode, active: number): void {
+    // d3 also starts a drag on a plain click. Inspection must respect pause.
+    if (!active && this.settings.animate) this.simulation.alphaTarget(0.3).restart();
+    node.fx = node.x;
+    node.fy = node.y;
+  }
+
+  private moveNodeDrag(node: GraphNode, mouseX: number, mouseY: number): void {
+    const t = this.transform;
+    node.fx = (mouseX - t.x) / t.k;
+    node.fy = (mouseY - t.y) / t.k;
+    if (!this.settings.animate) {
+      // With no ticks, move only the dragged node and redraw directly.
+      node.x = node.fx;
+      node.y = node.fy;
+      this.render();
+    }
+  }
+
+  private endNodeDrag(node: GraphNode, active: number): void {
+    if (!active) this.simulation.alphaTarget(0);
+    node.fx = null;
+    node.fy = null;
   }
 
   private getNodeRadius(node: GraphNode): number {

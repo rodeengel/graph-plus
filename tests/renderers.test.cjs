@@ -491,3 +491,132 @@ test("3D standard graph retains relation notes and membership metadata without i
   assert.strictEqual(input.links[0].target, members[0]);
   simulation.stop();
 });
+
+test("2D resize redraws a paused graph without changing positions, camera, alpha or restarting physics", () => {
+  const a = { ...node("a", 10, 20), vx: 0.2, vy: -0.1, fx: 10, fy: 20 };
+  const b = { ...node("b", 100, 40), vx: -0.2, vy: 0.1 };
+  const renderer = fixture2D(settings({}, { animate: false, showNodeLabels: false }), [], [a, b]);
+  const xForce = forceX(400).strength(0.1);
+  const yForce = forceY(300).strength(0.1);
+  renderer.simulation = forceSimulation(renderer.nodes)
+    .force("x", xForce).force("y", yForce).alpha(0.037).alphaTarget(0).stop();
+  const camera = renderer.transform = { x: 237, y: -61, k: 1.75 };
+  const positions = renderer.nodes.map(({ x, y, vx, vy, fx, fy }) => ({ x, y, vx, vy, fx, fy }));
+  let sizes = 0, restarts = 0, renders = 0;
+  renderer.updateSize = () => { sizes++; renderer.width = 1000; renderer.height = 700; };
+  const restart = renderer.simulation.restart.bind(renderer.simulation);
+  renderer.simulation.restart = () => { restarts++; return restart(); };
+  const render = renderer.render.bind(renderer);
+  renderer.render = () => { renders++; render(); };
+  try {
+    renderer.handleResize();
+    renderer.handleResize(); // Covers the hide/show notifications from opening a note.
+    assert.equal(sizes, 2);
+    assert.equal(renders, 2);
+    assert.equal(xForce.x()(a), 500);
+    assert.equal(yForce.y()(a), 350);
+    assert.equal(restarts, 0);
+    assert.equal(renderer.simulation.alpha(), 0.037);
+    assert.equal(renderer.simulation.alphaTarget(), 0);
+    assert.strictEqual(renderer.transform, camera);
+    assert.deepEqual(renderer.nodes.map(({ x, y, vx, vy, fx, fy }) => ({ x, y, vx, vy, fx, fy })), positions);
+
+    renderer.settings.animate = true;
+    renderer.handleResize();
+    assert.equal(sizes, 3);
+    assert.equal(renders, 3);
+    assert.equal(restarts, 1, "Animated graphs retain the existing resize restart behavior");
+    assert.equal(renderer.simulation.alpha(), 0.1);
+  } finally {
+    renderer.simulation.stop();
+  }
+});
+
+test("paused 2D projection toggles retain source-note and junction layout without duplicating entities", () => {
+  const relation = explicitRelation("toggle", ["a", "b"]);
+  const junctionId = "\u0000relation:toggle";
+  const makeData = junctions => ({
+    nodes: [node("a", undefined, undefined), node("b", undefined, undefined), {
+      ...node(junctions ? junctionId : relation.sourcePath, undefined, undefined),
+      name: relation.sourceName,
+      properties: { graph_kind: ["relation"], graph_id: [relation.id] },
+      ...(junctions ? { relation } : {}),
+    }],
+    links: relation.members.map(target => ({
+      source: junctions ? junctionId : relation.sourcePath, target, type: relation.type,
+      curvature: 0, kind: "membership", relationId: relation.id, memberCount: relation.members.length,
+    })),
+  });
+  const renderer = fixture2D(settings({ alliance: createLinkTypeConfig("#12abcd") }, { animate: false }), [], []);
+  renderer.simulation = forceSimulation([]).stop();
+  const camera = renderer.transform = { x: 137, y: -45, k: 1.8 };
+  try {
+    renderer.updateData(makeData(true));
+    const original = [...renderer.nodes];
+    original.forEach((n, index) => Object.assign(n, {
+      x: 80 + index * 50, y: 120 + index * 30,
+      vx: index * 0.15, vy: index * -0.1, fx: null, fy: null,
+    }));
+    Object.assign(original[2], { fx: original[2].x, fy: original[2].y });
+    const layout = original.map(({ x, y, vx, vy, fx, fy }) => ({ x, y, vx, vy, fx, fy }));
+    for (const junctions of [false, true, false, true]) {
+      renderer.updateData(makeData(junctions));
+      assert.strictEqual(renderer.transform, camera);
+      assert.equal(renderer.nodes.length, 3);
+      assert.equal(new Set(renderer.nodes).size, 3, "Representations do not share a duplicated layout object");
+      assert.deepEqual(renderer.nodes.map(n => n.id), ["a", "b", junctions ? junctionId : relation.sourcePath]);
+      renderer.nodes.forEach((n, index) => assert.strictEqual(n, original[index]));
+      assert.deepEqual(renderer.nodes.map(({ x, y, vx, vy, fx, fy }) => ({ x, y, vx, vy, fx, fy })), layout);
+      assert.equal(renderer.nodes[2].relation, junctions ? relation : undefined, "Standard notes do not retain junction metadata");
+      assert.deepEqual(renderer.nodes[2].properties.graph_id, [relation.id]);
+      assert.ok(renderer.links.every(l => l.source === renderer.nodes[2]));
+    }
+  } finally {
+    renderer.simulation.stop();
+  }
+});
+
+test("paused 2D junction clicks do not resume physics and dragging moves only the selected node", () => {
+  const junction = { ...node("\u0000relation:r-1", 100, 120), relation: explicitRelation(), vx: 0.2, vy: -0.1 };
+  const entity = { ...node("a", 250, 170), vx: -0.1, vy: 0.2 };
+  const renderer = fixture2D(settings({}, { animate: false }), [], [junction, entity]);
+  renderer.simulation = forceSimulation(renderer.nodes).alpha(0.037).alphaTarget(0).stop();
+  const camera = renderer.transform = { x: 200, y: -40, k: 2 };
+  let restarts = 0;
+  const restart = renderer.simulation.restart.bind(renderer.simulation);
+  renderer.simulation.restart = () => { restarts++; return restart(); };
+  const positions = renderer.nodes.map(({ x, y, vx, vy }) => ({ x, y, vx, vy }));
+  try {
+    renderer.startNodeDrag(junction, 0);
+    renderer.endNodeDrag(junction, 0); // Plain mousedown/mouseup followed by inspection.
+    assert.equal(restarts, 0);
+    assert.equal(renderer.simulation.alpha(), 0.037);
+    assert.equal(renderer.simulation.alphaTarget(), 0);
+    assert.deepEqual(renderer.nodes.map(({ x, y, vx, vy }) => ({ x, y, vx, vy })), positions);
+
+    renderer.startNodeDrag(junction, 0);
+    renderer.moveNodeDrag(junction, 500, 320);
+    assert.deepEqual([junction.x, junction.y, junction.fx, junction.fy], [150, 180, 150, 180]);
+    assert.deepEqual({ x: entity.x, y: entity.y, vx: entity.vx, vy: entity.vy }, positions[1]);
+    assert.equal(restarts, 0);
+    assert.equal(renderer.simulation.alpha(), 0.037);
+    assert.strictEqual(renderer.transform, camera);
+    assert.ok(renderer.ctx.draws.length > 0, "Paused dragging redraws the node without simulation ticks");
+    renderer.endNodeDrag(junction, 0);
+    assert.deepEqual([junction.fx, junction.fy], [null, null]);
+
+    renderer.settings.animate = true;
+    renderer.startNodeDrag(junction, 0);
+    assert.equal(restarts, 1);
+    assert.equal(renderer.simulation.alphaTarget(), 0.3);
+    const activePosition = { x: junction.x, y: junction.y };
+    renderer.moveNodeDrag(junction, 540, 360);
+    assert.deepEqual([junction.fx, junction.fy], [170, 200]);
+    assert.deepEqual({ x: junction.x, y: junction.y }, activePosition, "Animated dragging leaves movement to d3 ticks");
+    renderer.endNodeDrag(junction, 0);
+    assert.equal(renderer.simulation.alphaTarget(), 0);
+    assert.deepEqual([junction.fx, junction.fy], [null, null]);
+  } finally {
+    renderer.simulation.stop();
+  }
+});
