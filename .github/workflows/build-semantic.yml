@@ -1,0 +1,37 @@
+name: Build semantic test package
+
+on:
+  push:
+    branches:
+      - feature/semantic-links
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply semantic source
+        run: tar -xzf semantic-src.tar.gz
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Stage installable plugin
+        run: |
+          mkdir -p dist/graph-plus-semantic
+          cp main.js manifest.json styles.css dist/graph-plus-semantic/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: graph-plus-semantic
+          path: dist/graph-plus-semantic
