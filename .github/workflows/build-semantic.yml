@@ -4,11 +4,12 @@ on:
   push:
     branches:
       - feature/semantic-links
-      - codex/semantic-hyperrelations-2a
+      - 'codex/semantic-*'
   pull_request:
     branches:
       - main
       - feature/semantic-links
+      - 'codex/semantic-*'
   workflow_dispatch:
 
 jobs:
