@@ -15,9 +15,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Apply semantic source
-        run: tar -xzf semantic-src.tar.gz
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
