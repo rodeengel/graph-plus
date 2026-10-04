@@ -18,6 +18,18 @@ import { GraphRenderer3D } from "./graphRenderer3D";
 
 export const VIEW_TYPE = "graph-plus-semantic-view";
 
+const regionContextListeners = new Set<() => void>();
+
+/** Keep an open settings tab's availability hint in sync with graph mode. */
+export function onRegionContextChange(listener: () => void): () => void {
+  regionContextListeners.add(listener);
+  return () => regionContextListeners.delete(listener);
+}
+
+function notifyRegionContextChange(): void {
+  for (const listener of regionContextListeners) listener();
+}
+
 export class GraphLinkTypesView extends ItemView {
   private settings: GraphLinkTypesSettings;
   private saveSettings: () => Promise<void>;
@@ -41,6 +53,10 @@ export class GraphLinkTypesView extends ItemView {
   private relationsChevron: HTMLElement | null = null;
   private relationsSignature = "";
   private selectedRelationId: string | null = null;
+  private sidebarSettingControls = new Map<SettingDef["key"], { input: HTMLInputElement; valueDisplay?: HTMLElement }>();
+  private regionStatusEl: HTMLElement | null = null;
+  private sidebarRelationshipSync = new Map<string, () => void>();
+  private sidebarForceSync = new Map<string, () => void>();
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -63,6 +79,12 @@ export class GraphLinkTypesView extends ItemView {
 
   getIcon(): string {
     return "graph-plus-semantic";
+  }
+
+  getRegionAvailability(): { available: boolean; reason: string } {
+    if (this.currentMode !== "2d") return { available: false, reason: "Relationship regions are unavailable in 3D. Switch this graph to 2D." };
+    if (!this.settings.hypergraph2D) return { available: false, reason: "Relationship regions are unavailable in the standard graph. Enable Relationship junctions." };
+    return { available: true, reason: this.settings.hyperrelationRegions ? "Relationship regions are enabled in this 2D junction view." : "Relationship regions are available in this 2D junction view and are currently off." };
   }
 
   async onOpen(): Promise<void> {
@@ -192,6 +214,8 @@ export class GraphLinkTypesView extends ItemView {
     this.sidebarTypes = JSON.stringify(Object.keys(this.settings.linkTypes).sort());
     this.sidebarRebuildPending = false;
     this.linkCountEls.clear();
+    this.sidebarSettingControls.clear();
+    this.regionStatusEl = null;
     panel.empty();
 
     // --- Sidebar buttons row ---
@@ -211,6 +235,8 @@ export class GraphLinkTypesView extends ItemView {
       this.destroyRenderer();
       this.initRenderer();
       this.pushDataToRenderer();
+      this.syncSidebarSettings();
+      notifyRegionContextChange();
     });
 
     const homeBtn = btnRow.createEl("button", { text: "Home", cls: "gps-sidebar-btn" });
@@ -265,12 +291,14 @@ export class GraphLinkTypesView extends ItemView {
     // --- Profiles ---
     const profilesContent = this.createCollapsibleSection(panel, "Profiles", false);
     this.buildProfileEditor(profilesContent);
+    this.syncSidebarSettings();
     panel.scrollTop = scrollTop;
   }
 
   /** Inspection uses the authored record, including members hidden by filters. */
   private selectRelation(relation: ExplicitRelation): void {
     this.selectedRelationId = relation.id;
+    this.renderer2D?.setSelectedRelation(relation.id);
     this.sidebarVisible = true;
     if (this.filterPanelEl) this.filterPanelEl.style.display = "";
     this.sectionOpen.set("Relations", true);
@@ -287,7 +315,9 @@ export class GraphLinkTypesView extends ItemView {
     const model = this.fullData.semantic;
     const relations = model?.relations ?? [];
     const diagnostics = model?.diagnostics ?? [];
-    const signature = JSON.stringify([relations, diagnostics, this.selectedRelationId]);
+    const selected = relations.find((relation) => relation.id === this.selectedRelationId);
+    const count = selected && this.renderer2D ? this.renderer2D.getRelationDisplayCount(selected.id) : null;
+    const signature = JSON.stringify([relations, diagnostics, this.selectedRelationId, count, this.currentMode, this.settings.hypergraph2D]);
     if (signature === this.relationsSignature) return;
     this.relationsSignature = signature;
     const scrollTop = this.filterPanelEl?.scrollTop;
@@ -302,19 +332,27 @@ export class GraphLinkTypesView extends ItemView {
       });
       button.addEventListener("click", () => this.selectRelation(relation));
     }
-    const selected = relations.find((relation) => relation.id === this.selectedRelationId);
     if (selected) {
       const details = parent.createDiv({ cls: "gps-relation-details" });
       details.createEl("div", { text: `ID: ${selected.id}` });
       details.createEl("div", { text: `Type: ${selected.type}` });
       details.createEl("div", { text: `Unordered membership (${selected.members.length})` });
+      if (count) details.createEl("div", { text: `Displayed members: ${count.displayed} / ${count.total}` });
+      else details.createDiv({ cls: "gps-group-help", text: "Displayed-member counts are available in the 2D view." });
       const members = details.createEl("ul");
       for (const member of selected.members) members.createEl("li", { text: member });
       details.createEl("div", { text: `Source: ${selected.sourcePath}` });
       const open = details.createEl("button", { text: "Open source note" });
       open.addEventListener("click", () => this.app.workspace.openLinkText(selected.sourcePath, "", "tab"));
-      details.createDiv({ cls: "gps-group-help", text: "All authored members are listed; filters may hide connections in the graph." });
+      const clear = details.createEl("button", { text: "Clear selection" });
+      clear.addEventListener("click", () => {
+        this.selectedRelationId = null;
+        this.renderer2D?.setSelectedRelation(null);
+        this.refreshRelations();
+      });
+      details.createDiv({ cls: "gps-group-help", text: "All authored members are listed. Regions approximate the displayed members; a node inside a region is not necessarily a member. Filters can hide members or the source junction and its region." });
     } else if (this.selectedRelationId) {
+      this.renderer2D?.setSelectedRelation(null);
       parent.createDiv({ cls: "gps-group-help", text: "The selected relation is no longer valid or present." });
     }
     for (const diagnostic of diagnostics) {
@@ -332,20 +370,51 @@ export class GraphLinkTypesView extends ItemView {
     for (const def of defs) {
       if (def.type === "toggle") {
         const raw = this.settings[def.key] as boolean;
-        this.buildToggle(parent, def.label, def.invert ? !raw : raw, async (val) => {
+        const input = this.buildToggle(parent, def.label, def.invert ? !raw : raw, async (val) => {
           (this.settings as any)[def.key] = def.invert ? !val : val;
           await this.saveSettings();
           this.applySettingEffect(def);
+          this.syncSidebarSettings();
+          notifyRegionContextChange();
         });
+        this.sidebarSettingControls.set(def.key, { input });
       } else if (def.type === "slider") {
         const raw = this.settings[def.key] as number;
-        this.buildSlider(parent, def.label, def.invert ? Math.abs(raw) : raw, def.min!, def.max!, def.step!, async (val) => {
+        const control = this.buildSlider(parent, def.label, def.invert ? Math.abs(raw) : raw, def.min!, def.max!, def.step!, async (val) => {
           (this.settings as any)[def.key] = def.invert ? -val : val;
           await this.saveSettings();
           this.applySettingEffect(def);
+          this.syncSidebarSettings();
+          notifyRegionContextChange();
         });
+        this.sidebarSettingControls.set(def.key, control);
       }
     }
+    if (section === "display2d") {
+      this.regionStatusEl = parent.createDiv({ cls: "gps-group-help" });
+      parent.createDiv({ cls: "gps-group-help", text: "Regions approximate displayed membership. A node inside a region is not necessarily a member; filters can hide the source junction and its region." });
+    }
+  }
+
+  /** Update existing inputs and availability without reopening or replacing menus. */
+  private syncSidebarSettings(): void {
+    const { available, reason } = this.getRegionAvailability();
+    if (this.regionStatusEl) this.regionStatusEl.textContent = reason;
+    for (const def of SETTING_DEFS) {
+      const control = this.sidebarSettingControls.get(def.key);
+      if (!control) continue;
+      const raw = this.settings[def.key];
+      if (def.type === "toggle") control.input.checked = def.invert ? !raw : !!raw;
+      else {
+        const value = def.invert ? Math.abs(raw as number) : raw as number;
+        control.input.value = String(value);
+        if (control.valueDisplay) control.valueDisplay.textContent = String(Math.round(value * 100) / 100);
+      }
+      if (def.key === "hyperrelationRegions") control.input.disabled = !available;
+      if (def.key === "regionFillOpacity") control.input.disabled = !available || !this.settings.hyperrelationRegions;
+    }
+    for (const sync of this.sidebarRelationshipSync.values()) sync();
+    for (const sync of this.sidebarForceSync.values()) sync();
   }
 
   /** Apply the appropriate renderer update for a setting change */
@@ -370,8 +439,9 @@ export class GraphLinkTypesView extends ItemView {
   }
 
   /** Keep an already-open graph and its sidebar in sync with the settings tab. */
-  refreshSettings(effect: SettingEffect | "all" | "groups", renderers?: SettingDef["renderers"]): void {
-    this.buildFilterPanel();
+  refreshSettings(effect: SettingEffect | "all" | "groups", renderers?: SettingDef["renderers"], key?: SettingDef["key"]): void {
+    if (key === "hyperrelationRegions" || key === "regionFillOpacity" || key === "hypergraph2D") this.syncSidebarSettings();
+    else this.buildFilterPanel();
     if (effect === "groups") {
       this.updateNodeGroups();
       return;
@@ -385,11 +455,13 @@ export class GraphLinkTypesView extends ItemView {
       applyNodeGroups(this.fullData.nodes, this.settings.nodeGroups);
     }
     this.applySettingEffect({ effect, renderers });
+    notifyRegionContextChange();
   }
 
   /** Build the Relationship Types section with visual + physics controls. */
   private buildLinkTypesSection(panel: HTMLElement, content = this.createCollapsibleSection(panel, "Relationship Types", true)): void {
     this.linkTypesContent = content;
+    this.sidebarRelationshipSync.clear();
     content.empty();
     const help = content.createDiv({ cls: "gps-group-help" });
     help.setText("Appearance controls are 2D-first. Width, arrows, distance and attraction also affect 3D.");
@@ -440,7 +512,7 @@ export class GraphLinkTypesView extends ItemView {
 
       const grid = card.createDiv({ cls: "gps-link-style-grid" });
 
-      this.buildCompactSelect(
+      const style = this.buildCompactSelect(
         grid,
         "Style",
         config.lineStyle,
@@ -456,7 +528,7 @@ export class GraphLinkTypesView extends ItemView {
         }
       );
 
-      this.buildCompactSelect(
+      const arrow = this.buildCompactSelect(
         grid,
         "Arrow",
         config.arrowMode,
@@ -472,7 +544,7 @@ export class GraphLinkTypesView extends ItemView {
         }
       );
 
-      this.buildCompactNumber(
+      const width = this.buildCompactNumber(
         grid,
         "Width ×",
         config.widthMultiplier,
@@ -486,7 +558,7 @@ export class GraphLinkTypesView extends ItemView {
         }
       );
 
-      this.buildCompactNumber(
+      const opacity = this.buildCompactNumber(
         grid,
         "Opacity",
         config.opacity,
@@ -500,7 +572,7 @@ export class GraphLinkTypesView extends ItemView {
         }
       );
 
-      this.buildCompactNumber(
+      const distance = this.buildCompactNumber(
         grid,
         "Distance ×",
         config.distanceMultiplier,
@@ -514,7 +586,7 @@ export class GraphLinkTypesView extends ItemView {
         }
       );
 
-      this.buildCompactNumber(
+      const attraction = this.buildCompactNumber(
         grid,
         "Attraction ×",
         config.attraction,
@@ -528,6 +600,16 @@ export class GraphLinkTypesView extends ItemView {
         },
         "Base force × attraction, capped at 2 for layout stability"
       );
+      this.sidebarRelationshipSync.set(type, () => {
+        checkbox.checked = type === UNTYPED_LINK_KEY ? this.settings.showUntyped : config.visible;
+        swatch.value = config.color;
+        style.value = config.lineStyle;
+        arrow.value = config.arrowMode;
+        width.value = String(config.widthMultiplier);
+        opacity.value = String(config.opacity);
+        distance.value = String(config.distanceMultiplier);
+        attraction.value = String(config.attraction);
+      });
     }
   }
 
@@ -550,6 +632,7 @@ export class GraphLinkTypesView extends ItemView {
   /** Build the Advanced Link Forces collapsible section */
   private buildLinkForcesSection(panel: HTMLElement, content = this.createCollapsibleSection(panel, "Advanced Link Forces", false)): void {
     this.linkForcesContent = content;
+    this.sidebarForceSync.clear();
     content.empty();
 
     const help = content.createEl("div", { cls: "gps-group-help" });
@@ -576,6 +659,7 @@ export class GraphLinkTypesView extends ItemView {
         cls: "gps-force-rule-input",
       });
       forceInput.value = config.forceRule || "";
+      this.sidebarForceSync.set(type, () => { forceInput.value = config.forceRule || ""; });
       forceInput.addEventListener("change", async () => {
         config.forceRule = forceInput.value.trim() || undefined;
         await this.saveSettings();
@@ -590,7 +674,7 @@ export class GraphLinkTypesView extends ItemView {
     value: string,
     options: Array<[string, string]>,
     onChange: (value: string) => Promise<void>
-  ): void {
+  ): HTMLSelectElement {
     const control = parent.createDiv({ cls: "gps-link-style-control" });
     control.createEl("label", { text: label });
     const select = control.createEl("select");
@@ -600,6 +684,7 @@ export class GraphLinkTypesView extends ItemView {
     }
     select.value = value;
     select.addEventListener("change", () => onChange(select.value));
+    return select;
   }
 
   private buildCompactNumber(
@@ -611,7 +696,7 @@ export class GraphLinkTypesView extends ItemView {
     step: number,
     onChange: (value: number) => Promise<void>,
     description?: string
-  ): void {
+  ): HTMLInputElement {
     const control = parent.createDiv({ cls: "gps-link-style-control" });
     control.createEl("label", { text: label });
     const input = control.createEl("input", { type: "number" });
@@ -626,6 +711,7 @@ export class GraphLinkTypesView extends ItemView {
       input.value = String(Math.round(safe * 100) / 100);
       onChange(safe);
     });
+    return input;
   }
 
   private buildToggle(
@@ -633,12 +719,13 @@ export class GraphLinkTypesView extends ItemView {
     label: string,
     value: boolean,
     onChange: (val: boolean) => Promise<void>
-  ): void {
+  ): HTMLInputElement {
     const row = parent.createDiv({ cls: "gps-toggle-row" });
     row.createEl("span", { text: label });
     const toggle = row.createEl("input", { type: "checkbox" });
     toggle.checked = value;
     toggle.addEventListener("change", () => onChange(toggle.checked));
+    return toggle;
   }
 
   private buildSlider(
@@ -649,7 +736,7 @@ export class GraphLinkTypesView extends ItemView {
     max: number,
     step: number,
     onChange: (val: number) => Promise<void>
-  ): void {
+  ): { input: HTMLInputElement; valueDisplay: HTMLElement } {
     const row = parent.createDiv({ cls: "gps-slider-row" });
     row.createEl("span", { text: label });
 
@@ -670,6 +757,7 @@ export class GraphLinkTypesView extends ItemView {
       valueDisplay.textContent = String(Math.round(v * 100) / 100);
       onChange(v);
     });
+    return { input: slider, valueDisplay };
   }
 
   private buildGroupEditor(parent: HTMLElement): void {
@@ -794,6 +882,7 @@ export class GraphLinkTypesView extends ItemView {
 
   private async loadProfile(profile: SettingsProfile): Promise<void> {
     const snapshot = profile.snapshot;
+    const before = JSON.parse(JSON.stringify(this.settings)) as GraphLinkTypesSettings;
 
     // Apply SETTING_DEFS values
     for (const def of SETTING_DEFS) {
@@ -806,7 +895,7 @@ export class GraphLinkTypesView extends ItemView {
     if (snapshot.showUntyped !== undefined) this.settings.showUntyped = snapshot.showUntyped;
     if (snapshot.nodeColor !== undefined) this.settings.nodeColor = snapshot.nodeColor;
     if (snapshot.nodeColorHover !== undefined) this.settings.nodeColorHover = snapshot.nodeColorHover;
-    if (snapshot.nodeGroups !== undefined) {
+    if (snapshot.nodeGroups !== undefined && JSON.stringify(snapshot.nodeGroups) !== JSON.stringify(this.settings.nodeGroups)) {
       this.settings.nodeGroups = JSON.parse(JSON.stringify(snapshot.nodeGroups));
     }
 
@@ -833,9 +922,40 @@ export class GraphLinkTypesView extends ItemView {
     }
 
     await this.saveSettings();
-    this.updateRelationshipForces();
-    await this.rebuildGraph(true);
-    this.updateRelationshipVisuals();
+    const changed = (a: unknown, b: unknown) => JSON.stringify(a) !== JSON.stringify(b);
+    const effects = SETTING_DEFS.filter((def) => changed(before[def.key], this.settings[def.key]));
+    const groupsChanged = changed(before.nodeGroups, this.settings.nodeGroups);
+    let topologyChanged = effects.some((def) => def.effect === "rebuild")
+      || before.showUntyped !== this.settings.showUntyped || before.searchQuery !== this.settings.searchQuery;
+    let forcesChanged = effects.some((def) => def.effect === "force");
+    let relationshipVisualsChanged = before.nodeColor !== this.settings.nodeColor || before.nodeColorHover !== this.settings.nodeColorHover;
+    for (const [type, config] of Object.entries(this.settings.linkTypes)) {
+      const previous = before.linkTypes[type];
+      if (!previous) continue;
+      topologyChanged ||= previous.visible !== config.visible;
+      forcesChanged ||= previous.distanceMultiplier !== config.distanceMultiplier || previous.attraction !== config.attraction || previous.forceRule !== config.forceRule;
+      relationshipVisualsChanged ||= previous.color !== config.color || previous.lineStyle !== config.lineStyle
+        || previous.widthMultiplier !== config.widthMultiplier || previous.opacity !== config.opacity || previous.arrowMode !== config.arrowMode;
+    }
+
+    if (topologyChanged || forcesChanged) {
+      // Keep the accepted paused-profile order: restored springs precede data.
+      if (forcesChanged) this.updateRelationshipForces();
+      await this.rebuildGraph(true);
+    } else {
+      // Region-only restoration keeps the editor objects and simulation intact.
+      this.syncSidebarSettings();
+      if (groupsChanged) {
+        this.buildFilterPanel();
+        this.updateNodeGroups();
+      }
+    }
+    const visual2D = relationshipVisualsChanged || groupsChanged || effects.some((def) => def.effect === "visual" && def.renderers !== "3d");
+    const visual3D = relationshipVisualsChanged || groupsChanged || effects.some((def) => def.effect === "visual" && def.renderers !== "2d");
+    if (visual2D) this.renderer2D?.updateSettings();
+    if (visual3D) this.renderer3D?.updateSettings();
+    if (effects.some((def) => def.effect === "animate")) this.renderer2D?.setAnimate(this.settings.animate);
+    notifyRegionContextChange();
   }
 
   private initRenderer(): void {
@@ -849,6 +969,7 @@ export class GraphLinkTypesView extends ItemView {
         this.settings,
         (relation) => this.selectRelation(relation)
       );
+      if (this.selectedRelationId) this.renderer2D.setSelectedRelation(this.selectedRelationId);
     } else {
       this.renderer3D = new GraphRenderer3D(
         this.canvasContainerEl,
@@ -867,6 +988,7 @@ export class GraphLinkTypesView extends ItemView {
       const standard = projectGraphData(this.fullData, false);
       this.renderer3D.updateData(filterGraphData(standard, this.settings, this.settings.searchQuery));
     }
+    this.refreshRelations();
   }
 
   private destroyRenderer(): void {
@@ -883,5 +1005,6 @@ export class GraphLinkTypesView extends ItemView {
   async onClose(): Promise<void> {
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
     this.destroyRenderer();
+    notifyRegionContextChange();
   }
 }

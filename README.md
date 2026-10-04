@@ -28,6 +28,7 @@ This makes it possible for two equally real relationships to have very different
   - Frontmatter wikilinks (e.g. `parent: [[Note]]`)
   - Inline fields (e.g. `parent:: [[Note]]`, `[parent:: [[Note]]]`, `(parent:: [[Note]])`)
 - **Explicit multi-member relations** — Opt-in relationship notes retain their authored identity and unordered membership. In 2D, each relation has a labelled diamond junction; standard 2D and 3D retain its source note and membership connections.
+- **Optional relationship regions** — Subtle padded enclosures behind 2D junction graphs show overlapping authored relations. Selecting a junction or relation highlights its actual displayed members; a node inside a region is not automatically a member. See [2D regions](docs/regions2d.md).
 - **Semantic relationship styling** — Per-type color, line style, width, opacity, and arrow behavior
 - **Per-type relationship physics** — Independent distance and attraction multipliers
 - **2D and 3D rendering** — Toggle between Canvas-based 2D and WebGL 3D views

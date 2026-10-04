@@ -190,6 +190,8 @@ export interface GraphLinkTypesSettings {
   showLabels: boolean;
   showNodeLabels: boolean;
   hypergraph2D: boolean;
+  hyperrelationRegions: boolean;
+  regionFillOpacity: number;
   showUntyped: boolean;
   defaultMode: "2d" | "3d";
   nodeSize: number;
@@ -222,6 +224,8 @@ export const DEFAULT_SETTINGS: GraphLinkTypesSettings = {
   showLabels: false,
   showNodeLabels: true,
   hypergraph2D: true,
+  hyperrelationRegions: false,
+  regionFillOpacity: 0.08,
   showUntyped: true,
   defaultMode: "2d",
   nodeSize: 5,
@@ -284,6 +288,8 @@ export const SETTING_DEFS: SettingDef[] = [
 
   // 2D Display
   { key: "hypergraph2D", label: "Relationship junctions", desc: "Show explicit multi-member relations as junctions in 2D; disable for the standard note graph", section: "display2d", type: "toggle", effect: "rebuild", renderers: "2d" },
+  { key: "hyperrelationRegions", label: "Relationship regions", desc: "Approximate enclosures of displayed members in 2D junction mode. A node inside an enclosure is not necessarily a member; filters can hide a relation's junction and region.", section: "display2d", type: "toggle", effect: "visual", renderers: "2d" },
+  { key: "regionFillOpacity", label: "Region fill opacity", desc: "Low-opacity fill for relationship regions (0–0.3)", section: "display2d", type: "slider", min: 0, max: 0.3, step: 0.01, effect: "visual", renderers: "2d" },
   { key: "showLabels", label: "Edge labels", desc: "Display link type names on edges", section: "display2d", type: "toggle", effect: "visual", renderers: "2d" },
   { key: "showNodeLabels", label: "Node labels", desc: "Display node names when zoomed in", section: "display2d", type: "toggle", effect: "visual", renderers: "2d" },
   { key: "textFadeThreshold", label: "Node label zoom", desc: "Zoom level at which node labels appear (0.1–5)", section: "display2d", type: "slider", min: 0.1, max: 5, step: 0.1, effect: "visual", renderers: "2d" },
