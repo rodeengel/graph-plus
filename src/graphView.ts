@@ -183,7 +183,7 @@ export class GraphLinkTypesView extends ItemView {
     const filtersContent = this.createCollapsibleSection(panel, "Filters", true);
     this.renderSettingsSection(filtersContent, "filters");
 
-    // --- Link Types (manual — dynamic from data) ---
+    // --- Relationship Types (manual — dynamic from data) ---
     this.buildLinkTypesSection(panel);
 
     const displayContent = this.createCollapsibleSection(panel, "Display", false);
@@ -198,7 +198,7 @@ export class GraphLinkTypesView extends ItemView {
     const forcesContent = this.createCollapsibleSection(panel, "Forces", false);
     this.renderSettingsSection(forcesContent, "forces");
 
-    // --- Link Forces ---
+    // --- Advanced directional link forces ---
     this.buildLinkForcesSection(panel);
 
     // --- Groups (manual — complex editor) ---

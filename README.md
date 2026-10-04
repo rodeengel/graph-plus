@@ -1,114 +1,168 @@
-# Graph Plus
+# Graph Plus Semantic
 
-A custom graph view for [Obsidian](https://obsidian.md) with **typed, colored links** parsed from Dataview-style inline fields and frontmatter wikilinks — in both 2D and 3D.
+A semantic graph view for [Obsidian](https://obsidian.md), forked from [Graph Plus](https://github.com/NicolasOng/graph-plus).
+
+Graph Plus Semantic keeps Graph Plus's typed-link model, but separates **relationship meaning**, **relationship appearance**, and **layout physics** so the same vault can be rendered as a more expressive knowledge graph.
 
 ![Obsidian](https://img.shields.io/badge/Obsidian-%23483699.svg?logo=obsidian&logoColor=white)
+
+## First semantic-link milestone
+
+Each typed relationship can now independently control:
+
+- **Color**
+- **Visibility**
+- **Line style** — solid, dashed, or dotted (2D)
+- **Width multiplier**
+- **Opacity** (2D)
+- **Arrow behavior** — inherit global setting, force on, or force off
+- **Distance multiplier**
+- **Attraction multiplier**
+- **Advanced directional force rules**
+
+This makes it possible for two equally real relationships to have very different graph behavior. For example, an `enemy` relationship can be visually prominent but exert weak layout attraction, while `member_of` can exert strong organizational pull.
 
 ## Features
 
 - **Typed links** — Links are automatically extracted from:
   - Frontmatter wikilinks (e.g. `parent: [[Note]]`)
   - Inline fields (e.g. `parent:: [[Note]]`, `[parent:: [[Note]]]`, `(parent:: [[Note]])`)
-- **Color-coded link types** — Each link type gets its own color, configurable in settings
-- **2D and 3D rendering** — Toggle between a Canvas-based 2D view and a WebGL 3D view
-- **Overlay sidebar** — Filter and configure the graph without shrinking the canvas
+- **Semantic relationship styling** — Per-type color, line style, width, opacity, and arrow behavior
+- **Per-type relationship physics** — Independent distance and attraction multipliers
+- **2D and 3D rendering** — Toggle between Canvas-based 2D and WebGL 3D views
+- **Overlay sidebar** — Tune the graph without shrinking the canvas
 - **Node groups** — Color nodes by query (path, tags, properties, filename)
-- **Link forces** — Apply directional forces and distance multipliers per link type
-- **Profiles** — Save and load named snapshots of all graph settings
+- **Advanced link forces** — Optional directional forces per relationship type
+- **Profiles** — Save/load graph projections, including relationship styling and physics
 - **Non-existent nodes** — Unresolved wikilinks appear with dashed outlines (2D) or wireframe spheres (3D)
 
 ## Link Parsing
 
-Links are detected from two sources:
+Links are detected from two sources.
 
 **Frontmatter** — Only `[[wikilinks]]` in YAML frontmatter create typed links:
+
 ```yaml
 ---
-parent: "[[Parent Note]]"
-related:
-  - "[[Note A]]"
-  - "[[Note B]]"
+member_of: "[[Camarilla]]"
+enemy:
+  - "[[Character A]]"
+  - "[[Character B]]"
 ---
 ```
 
 **Inline fields** — Dataview-style fields anywhere in the note body:
+
+```text
+member_of:: [[Camarilla]]
+[enemy:: [[Character A]], [[Character B]]]
 ```
-parent:: [[Parent Note]]
-[tags:: [[Topic A]], [[Topic B]]]
-(related:: [[See Also]])
+
+Plain text frontmatter values without `[[]]` are not treated as links.
+
+## Relationship semantics
+
+Graph Plus Semantic deliberately separates visual importance from physical attraction.
+
+A relationship can be configured approximately like this in the UI:
+
+```text
+enemy
+  style:       dashed
+  width:       1.8×
+  opacity:     0.85
+  arrow:       on
+  distance:    1.6×
+  attraction:  0.25×
+
+member_of
+  style:       solid
+  width:       1.3×
+  opacity:     1.0
+  arrow:       on
+  distance:    0.7×
+  attraction:  1.5×
 ```
 
-Plain text values in frontmatter (without `[[]]`) are not treated as links.
+The settings are stored in plugin configuration, not written into the notes themselves.
 
-## Sidebar & Filtering
+### Appearance
 
-The graph view includes an overlay sidebar for quick access to:
+| Setting | Effect |
+|---|---|
+| Color | Relationship color |
+| Style | Solid, dashed, or dotted in 2D |
+| Width × | Multiplies the global base link thickness |
+| Opacity | Per-type 2D opacity |
+| Arrow | Inherit global setting, force on, or force off |
 
-- **Search** — Filter nodes by name
-- **Filters** — Toggle attachments, orphans, existing-only nodes
-- **Link types** — Show/hide individual link types and change their colors
-- **Node groups** — Color nodes matching queries like `path:folder`, `tag:#topic`, `[property:value]`
-- **Display settings** — Node size, link thickness, arrows, labels, zoom thresholds
-- **Forces** — Charge, centering, link strength, collision, link distance
-- **Profiles** — Save/load/delete setting snapshots
+### Physics
 
-## Link Forces
+| Setting | Effect |
+|---|---|
+| Distance × | Multiplies the global preferred link distance |
+| Attraction × | Multiplies the global link attraction |
+| Attraction = 0 | Keeps the relationship visible but removes its normal spring pull |
 
-(Warning - Experimental)
+Width, arrow behavior, distance and attraction are also honored in 3D. Per-type dash patterns and opacity are currently 2D-first.
 
-Each link type can have a force rule that influences the graph layout. Enter rules in the **Link Forces** section of the sidebar or settings tab.
+## Advanced link forces
 
-**Syntax:** `direction:magnitude` (space-separated for multiple rules)
+Directional force rules from Graph Plus remain available.
+
+**Syntax:** `direction:magnitude`
 
 | Rule | Effect |
-|------|--------|
+|---|---|
 | `up:N` / `down:N` | Push targets up/down |
 | `left:N` / `right:N` | Push targets left/right |
 | `forward:N` / `backward:N` | Push targets forward/backward (3D only) |
-| `distance:Nx` | Multiply link distance by N |
+| `distance:Nx` | Legacy extra distance multiplier |
 
-**Examples:**
-- `down:1` — make children appear below parents
-- `down:0.5 distance:2x` — gentle downward push with longer links
-- `right:1 distance:1.5x` — push targets right with 1.5× link distance
+The legacy `distance:Nx` rule is multiplied with the explicit **Distance ×** semantic setting.
 
-## Query Syntax
-
-Node group queries follow Obsidian conventions:
+## Node group queries
 
 | Query | Matches |
-|-------|---------|
-| `path:folder` | Notes in folder (or subfolder) |
+|---|---|
+| `path:folder` | Notes in folder or subfolder |
 | `file:name` | Notes with name in filename |
 | `tag:#topic` | Notes with tag |
 | `[prop:value]` | Notes with frontmatter property |
-| `bare text` | Notes with text in filename |
-| `-query` | Negate any query |
+| `bare text` | Notes with text in filename/path |
+| `-query` | Negate a query |
 
-## Installation
+## Development install alongside Graph Plus
 
-### From Community Plugins
+This fork uses a separate Obsidian plugin ID:
 
-1. Open Obsidian → Settings → Community Plugins
-2. Search for **Graph Plus**
-3. Install and enable
+```text
+graph-plus-semantic
+```
 
-### Manual
+so it can be installed beside the original Graph Plus during development.
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/nicolasong/graph-plus/releases/latest)
-2. Create a folder `graph-plus` in your vault's `.obsidian/plugins/` directory
-3. Copy the downloaded files into that folder
-4. Enable the plugin in Settings → Community Plugins
+1. Build the project.
+2. Copy `main.js`, `manifest.json`, and `styles.css` into:
+   `.obsidian/plugins/graph-plus-semantic/`
+3. Enable **Graph Plus Semantic** in Obsidian.
+4. Run **Graph Plus Semantic: Open Graph Plus Semantic view** from the command palette.
 
-## Usage
+## Roadmap
 
-1. Open the command palette (`Ctrl/Cmd + P`)
-2. Run **Graph Plus: Open graph view**
-3. The graph view opens as a panel — use the sidebar to configure filters, colors, and forces
+The semantic-link work is intended to support later graph projections without making the visualization itself authoritative.
+
+Planned directions include:
+
+- metadata-driven node importance/size
+- neighborhood/hop views
+- social / organizational / geographic / evidence projections
+- graph-derived centrality and clustering overlays
+- richer 3D relationship rendering
 
 ## Architecture
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for an overview of the codebase structure.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the codebase structure.
 
 ## License
 
