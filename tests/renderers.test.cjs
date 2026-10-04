@@ -127,6 +127,120 @@ test("2D hover dimming multiplies configured opacity for edges and arrowheads", 
   assert.deepEqual(renderer.ctx.draws.slice(0, 4).map(draw => draw.alpha), [0.5, 0.5, 0.05, 0.05]);
 });
 
+test("2D group edits recolor existing nodes without replacing positions or reheating", () => {
+  const a = node("a", 10, 20), b = node("b", 100, 20);
+  a.properties = { affiliation: ["imbued"] };
+  b.groupColor = "#stale";
+  const renderer = fixture2D(settings({}, {
+    nodeGroups: [{ query: "[affiliation:imbued]", color: "#ff0000" }],
+    showLabels: false, showNodeLabels: false,
+  }), [], [a, b]);
+  renderer.simulation = forceSimulation(renderer.nodes).alpha(0.02).stop();
+  renderer.simulation.restart = () => { throw new Error("Group color edit restarted the layout"); };
+  const existingNodes = renderer.nodes;
+  const positions = existingNodes.map(({ x, y, vx, vy }) => ({ x, y, vx, vy }));
+
+  renderer.updateNodeGroups();
+  assert.strictEqual(renderer.nodes, existingNodes);
+  assert.strictEqual(renderer.simulation.nodes(), existingNodes);
+  assert.equal(renderer.simulation.alpha(), 0.02);
+  assert.deepEqual(existingNodes.map(({ x, y, vx, vy }) => ({ x, y, vx, vy })), positions);
+  assert.equal(a.groupColor, "#ff0000");
+  assert.equal(b.groupColor, undefined);
+  assert.deepEqual(renderer.ctx.draws.filter(draw => draw.kind === "fill").map(draw => draw.color),
+    ["#ff0000", renderer.settings.nodeColor]);
+
+  renderer.settings.nodeGroups[0].color = "#00ff00";
+  renderer.ctx.draws.length = 0;
+  renderer.updateNodeGroups();
+  assert.equal(renderer.ctx.draws.find(draw => draw.kind === "fill").color, "#00ff00");
+  renderer.settings.nodeGroups = [];
+  renderer.updateNodeGroups();
+  assert.equal(a.groupColor, undefined);
+  assert.equal(renderer.simulation.alpha(), 0.02);
+});
+
+test("3D group edits invalidate sphere and missing-node colors without replacing data or reheating", () => {
+  // Construct only the renderer shell; this does not claim a WebGL/Obsidian test.
+  const previousDocument = global.document;
+  const previousResizeObserver = global.ResizeObserver;
+  const originalInit = GraphRenderer3D.prototype.initGraph;
+  let renderer;
+  try {
+    global.document = { createElement: () => ({ style: {} }) };
+    global.ResizeObserver = class { observe() {} };
+    GraphRenderer3D.prototype.initGraph = () => {};
+    renderer = new GraphRenderer3D({ appendChild() {} }, {}, settings({}, {
+      nodeGroups: [{ query: "[affiliation:imbued]", color: "#ff0000" }],
+    }));
+  } finally {
+    GraphRenderer3D.prototype.initGraph = originalInit;
+    if (previousDocument === undefined) delete global.document;
+    else global.document = previousDocument;
+    if (previousResizeObserver === undefined) delete global.ResizeObserver;
+    else global.ResizeObserver = previousResizeObserver;
+  }
+  renderer.THREE = {
+    SphereGeometry: class { constructor(radius) { this.radius = radius; } },
+    WireframeGeometry: class { constructor(geometry) { this.geometry = geometry; } },
+    LineBasicMaterial: class { constructor(options) { Object.assign(this, options); } },
+    LineSegments: class { constructor(geometry, material) { Object.assign(this, { geometry, material }); } },
+  };
+  let data, replacements = 0;
+  let colorAccessor = null, objectAccessor = renderer.nodeThreeObjectFn;
+  const graph = {
+    graphData(...args) {
+      if (args.length) {
+        assert.equal(replacements++, 0, "Group edit replaced graph data");
+        data = args[0];
+        return graph;
+      }
+      return data;
+    },
+    nodeColor(accessor) { colorAccessor = accessor; return graph; },
+    nodeThreeObject(accessor) {
+      assert.notStrictEqual(accessor, objectAccessor, "Wireframe colors require a fresh accessor");
+      objectAccessor = accessor;
+      return graph;
+    },
+    d3ReheatSimulation() { throw new Error("Group edit reheated the layout"); },
+  };
+  renderer.graph = graph;
+  const a = node("a", 10, 20), missing = { ...node("missing", 100, 20), exists: false };
+  a.properties = { affiliation: ["imbued"] };
+  missing.properties = { affiliation: ["imbued"] };
+  renderer.applyData({ nodes: [a, missing], links: [] });
+  assert.deepEqual(data.nodes[0].properties, a.properties, "3D copies must retain property group queries");
+  const existingData = data;
+  const simulation = forceSimulation3D(data.nodes, 3).alpha(0.02).stop();
+  const positions = data.nodes.map(({ x, y, z, vx, vy, vz }) => ({ x, y, z, vx, vy, vz }));
+
+  renderer.updateNodeGroups();
+  assert.strictEqual(data, existingData);
+  assert.equal(replacements, 1);
+  assert.equal(colorAccessor(data.nodes[0]), "#ff0000");
+  assert.equal(objectAccessor(data.nodes[1]).material.color, "#ff0000");
+  assert.deepEqual(data.nodes.map(({ x, y, z, vx, vy, vz }) => ({ x, y, z, vx, vy, vz })), positions);
+  assert.equal(simulation.alpha(), 0.02);
+
+  renderer.settings.nodeGroups[0].color = "#00ff00";
+  renderer.updateNodeGroups();
+  assert.equal(colorAccessor(data.nodes[0]), "#00ff00");
+  assert.equal(objectAccessor(data.nodes[1]).material.color, "#00ff00");
+  renderer.settings.nodeGroups = [];
+  renderer.updateNodeGroups();
+  assert.equal(colorAccessor(data.nodes[0]), renderer.settings.nodeColor);
+  assert.equal(objectAccessor(data.nodes[1]).material.color, renderer.settings.nodeColor);
+  assert.equal(replacements, 1);
+  assert.equal(simulation.alpha(), 0.02);
+
+  renderer.graph = null;
+  renderer.settings.nodeGroups = [{ query: "file:a", color: "#0000ff" }];
+  renderer.pendingData = { nodes: [a], links: [] };
+  renderer.updateNodeGroups();
+  assert.equal(a.groupColor, "#0000ff", "Group changes before 3D initialization must reach pending nodes");
+});
+
 test("both renderers respect arrow overrides and multiply semantic distance with legacy rules", () => {
   for (const Renderer of [GraphRenderer2D, GraphRenderer3D]) {
     const renderer = Object.create(Renderer.prototype);

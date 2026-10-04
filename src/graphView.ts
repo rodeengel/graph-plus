@@ -29,6 +29,12 @@ export class GraphLinkTypesView extends ItemView {
   private sidebarVisible: boolean = true;
   private modeBtnEl: HTMLElement | null = null;
   private toggleBtnEl: HTMLElement | null = null;
+  private sectionOpen = new Map<string, boolean>();
+  private sidebarTypes = "";
+  private linkCountEls = new Map<string, HTMLElement>();
+  private sidebarRebuildPending = false;
+  private linkTypesContent: HTMLElement | null = null;
+  private linkForcesContent: HTMLElement | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -61,6 +67,9 @@ export class GraphLinkTypesView extends ItemView {
     // Body (no toolbar — buttons are in sidebar)
     const body = container.createDiv({ cls: "gps-body" });
     this.filterPanelEl = body.createDiv({ cls: "gps-filter-panel" });
+    this.filterPanelEl.addEventListener("focusout", () => {
+      if (this.sidebarRebuildPending) queueMicrotask(() => this.refreshFilterPanel());
+    });
     this.canvasContainerEl = body.createDiv({ cls: "gps-canvas-container" });
 
     // Floating sidebar toggle button — on body for z-index above overlay sidebar
@@ -99,10 +108,11 @@ export class GraphLinkTypesView extends ItemView {
     this.debounceTimer = setTimeout(() => this.rebuildGraph(), 500);
   }
 
-  private async rebuildGraph(): Promise<void> {
+  private async rebuildGraph(refreshSidebar = false): Promise<void> {
     this.fullData = await buildGraphData(this.app, this.settings);
     await this.saveSettings();
-    this.buildFilterPanel();
+    if (refreshSidebar) this.buildFilterPanel();
+    else this.refreshFilterPanel();
 
     if (!this.renderer2D && !this.renderer3D) {
       this.initRenderer();
@@ -117,14 +127,15 @@ export class GraphLinkTypesView extends ItemView {
     title: string,
     defaultOpen: boolean = true
   ): HTMLElement {
+    const open = this.sectionOpen.get(title) ?? defaultOpen;
     const section = parent.createDiv({ cls: "gps-filter-section" });
 
     const header = section.createDiv({ cls: "gps-collapsible-header" });
-    const chevron = header.createSpan({ cls: "gps-chevron", text: defaultOpen ? "▾" : "▸" });
+    const chevron = header.createSpan({ cls: "gps-chevron", text: open ? "▾" : "▸" });
     header.createSpan({ text: " " + title });
 
     const content = section.createDiv({ cls: "gps-collapsible-content" });
-    if (!defaultOpen) {
+    if (!open) {
       content.style.display = "none";
     }
 
@@ -132,14 +143,47 @@ export class GraphLinkTypesView extends ItemView {
       const isOpen = content.style.display !== "none";
       content.style.display = isOpen ? "none" : "";
       chevron.textContent = isOpen ? "▸" : "▾";
+      this.sectionOpen.set(title, !isOpen);
     });
 
     return content;
   }
 
+  /** Vault updates usually change counts, not the controls being edited. */
+  private refreshFilterPanel(): void {
+    const types = JSON.stringify(Object.keys(this.settings.linkTypes).sort());
+    if (types !== this.sidebarTypes) {
+      const active = document.activeElement;
+      if (active && (this.linkTypesContent?.contains(active) || this.linkForcesContent?.contains(active))
+        && active.matches("input, select, textarea")) {
+        this.sidebarRebuildPending = true;
+        return;
+      }
+      if (this.filterPanelEl && this.linkTypesContent && this.linkForcesContent) {
+        const scrollTop = this.filterPanelEl.scrollTop;
+        this.sidebarTypes = types;
+        this.sidebarRebuildPending = false;
+        this.linkCountEls.clear();
+        this.buildLinkTypesSection(this.filterPanelEl, this.linkTypesContent);
+        this.buildLinkForcesSection(this.filterPanelEl, this.linkForcesContent);
+        this.filterPanelEl.scrollTop = scrollTop;
+      } else {
+        this.buildFilterPanel();
+      }
+    }
+    const counts = countLinkTypes(this.fullData);
+    for (const [type, label] of this.linkCountEls) {
+      label.textContent = `(${counts.get(type) ?? 0})`;
+    }
+  }
+
   private buildFilterPanel(): void {
     const panel = this.filterPanelEl;
     if (!panel) return;
+    const scrollTop = panel.scrollTop;
+    this.sidebarTypes = JSON.stringify(Object.keys(this.settings.linkTypes).sort());
+    this.sidebarRebuildPending = false;
+    this.linkCountEls.clear();
     panel.empty();
 
     // --- Sidebar buttons row ---
@@ -209,6 +253,7 @@ export class GraphLinkTypesView extends ItemView {
     // --- Profiles ---
     const profilesContent = this.createCollapsibleSection(panel, "Profiles", false);
     this.buildProfileEditor(profilesContent);
+    panel.scrollTop = scrollTop;
   }
 
   /** Render all settings for a section from the declarative schema */
@@ -255,8 +300,12 @@ export class GraphLinkTypesView extends ItemView {
   }
 
   /** Keep an already-open graph and its sidebar in sync with the settings tab. */
-  refreshSettings(effect: SettingEffect | "all", renderers?: SettingDef["renderers"]): void {
+  refreshSettings(effect: SettingEffect | "all" | "groups", renderers?: SettingDef["renderers"]): void {
     this.buildFilterPanel();
+    if (effect === "groups") {
+      this.updateNodeGroups();
+      return;
+    }
     if (effect === "all") {
       this.updateRelationshipForces();
       this.updateRelationshipVisuals();
@@ -269,8 +318,9 @@ export class GraphLinkTypesView extends ItemView {
   }
 
   /** Build the Relationship Types section with visual + physics controls. */
-  private buildLinkTypesSection(panel: HTMLElement): void {
-    const content = this.createCollapsibleSection(panel, "Relationship Types", true);
+  private buildLinkTypesSection(panel: HTMLElement, content = this.createCollapsibleSection(panel, "Relationship Types", true)): void {
+    this.linkTypesContent = content;
+    content.empty();
     const help = content.createDiv({ cls: "gps-group-help" });
     help.setText("Appearance controls are 2D-first. Width, arrows, distance and attraction also affect 3D.");
 
@@ -316,7 +366,7 @@ export class GraphLinkTypesView extends ItemView {
         checkbox.dispatchEvent(new Event("change"));
       });
 
-      header.createEl("span", { text: `(${count})`, cls: "gps-link-count" });
+      this.linkCountEls.set(type, header.createEl("span", { text: `(${count})`, cls: "gps-link-count" }));
 
       const grid = card.createDiv({ cls: "gps-link-style-grid" });
 
@@ -421,9 +471,16 @@ export class GraphLinkTypesView extends ItemView {
     if (this.renderer3D) this.renderer3D.updateForces();
   }
 
+  private updateNodeGroups(): void {
+    applyNodeGroups(this.fullData.nodes, this.settings.nodeGroups);
+    this.renderer2D?.updateNodeGroups();
+    this.renderer3D?.updateNodeGroups();
+  }
+
   /** Build the Advanced Link Forces collapsible section */
-  private buildLinkForcesSection(panel: HTMLElement): void {
-    const content = this.createCollapsibleSection(panel, "Advanced Link Forces", false);
+  private buildLinkForcesSection(panel: HTMLElement, content = this.createCollapsibleSection(panel, "Advanced Link Forces", false)): void {
+    this.linkForcesContent = content;
+    content.empty();
 
     const help = content.createEl("div", { cls: "gps-group-help" });
     help.createEl("div", { text: "Directional rules: up/down:N, left/right:N" });
@@ -549,6 +606,7 @@ export class GraphLinkTypesView extends ItemView {
     const groups = this.settings.nodeGroups;
 
     const renderGroups = () => {
+      const scrollTop = this.filterPanelEl?.scrollTop;
       parent.empty();
 
       // Help text
@@ -567,7 +625,7 @@ export class GraphLinkTypesView extends ItemView {
         queryInput.addEventListener("change", async () => {
           group.query = queryInput.value;
           await this.saveSettings();
-          await this.rebuildGraph();
+          this.updateNodeGroups();
         });
 
         const colorInput = row.createEl("input", { type: "color", cls: "gps-color-swatch" });
@@ -575,7 +633,7 @@ export class GraphLinkTypesView extends ItemView {
         colorInput.addEventListener("input", async () => {
           group.color = colorInput.value;
           await this.saveSettings();
-          await this.rebuildGraph();
+          this.updateNodeGroups();
         });
 
         const deleteBtn = row.createEl("button", { text: "×", cls: "gps-group-delete-btn" });
@@ -583,7 +641,7 @@ export class GraphLinkTypesView extends ItemView {
           groups.splice(i, 1);
           await this.saveSettings();
           renderGroups();
-          await this.rebuildGraph();
+          this.updateNodeGroups();
         });
       }
 
@@ -593,6 +651,7 @@ export class GraphLinkTypesView extends ItemView {
         await this.saveSettings();
         renderGroups();
       });
+      if (this.filterPanelEl && scrollTop !== undefined) this.filterPanelEl.scrollTop = scrollTop;
     };
 
     renderGroups();
@@ -705,7 +764,7 @@ export class GraphLinkTypesView extends ItemView {
 
     await this.saveSettings();
     this.updateRelationshipForces();
-    await this.rebuildGraph();
+    await this.rebuildGraph(true);
     this.updateRelationshipVisuals();
   }
 

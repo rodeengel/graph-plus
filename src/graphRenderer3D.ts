@@ -2,6 +2,7 @@ import type { App } from "obsidian";
 import type { ForceGraph3DInstance } from "3d-force-graph";
 import type { GraphNode, GraphLink, GraphData, GraphLinkTypesSettings } from "./types";
 import { UNTYPED_LINK_KEY, parseForceRules, getEffectiveLinkStrength, type ForceRule } from "./types";
+import { applyNodeGroups } from "./linkParser";
 import { forceX, forceY } from "d3-force";
 // @ts-expect-error — d3-force-3d does not ship TypeScript declarations.
 import { forceZ } from "d3-force-3d";
@@ -174,6 +175,7 @@ export class GraphRenderer3D {
       groupColor: n.groupColor,
       exists: n.exists,
       tags: n.tags,
+      properties: n.properties,
       isAttachment: n.isAttachment,
       linkCount: n.linkCount,
     }));
@@ -202,6 +204,23 @@ export class GraphRenderer3D {
       .nodeRelSize(this.settings.nodeRelSize3D)
       .nodeVal((node: any) => this.getNodeVal(node))
       .nodeThreeObject(this.nodeThreeObjectFn);
+  }
+
+  /** Recolor the current nodes without replacing data or reheating physics. */
+  updateNodeGroups(): void {
+    if (this.destroyed) return;
+    if (!this.graph) {
+      if (this.pendingData) {
+        applyNodeGroups(this.pendingData.nodes, this.settings.nodeGroups);
+      }
+      return;
+    }
+
+    applyNodeGroups(this.graph.graphData().nodes as GraphNode[], this.settings.nodeGroups);
+    this.graph
+      .nodeColor((node: any) => node.groupColor || this.settings.nodeColor)
+      // A new accessor invalidates custom wireframes as well as default spheres.
+      .nodeThreeObject((node: any) => this.nodeThreeObjectFn(node));
   }
 
   /** Update force parameters and reheat the simulation */

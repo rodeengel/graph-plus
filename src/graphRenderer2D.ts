@@ -21,6 +21,7 @@ import type {
   LinkLineStyle,
 } from "./types";
 import { UNTYPED_LINK_KEY, parseForceRules, getEffectiveLinkStrength, type ForceRule } from "./types";
+import { applyNodeGroups } from "./linkParser";
 
 export class GraphRenderer2D {
   private container: HTMLElement;
@@ -171,6 +172,13 @@ export class GraphRenderer2D {
 
   /** Update visual display settings without reheating physics */
   updateSettings(): void {
+    this.render();
+  }
+
+  /** Recolor the current nodes without replacing data or reheating physics. */
+  updateNodeGroups(): void {
+    if (this.destroyed) return;
+    applyNodeGroups(this.nodes, this.settings.nodeGroups);
     this.render();
   }
 

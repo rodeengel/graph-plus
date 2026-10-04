@@ -13,7 +13,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
   }
 
   private async saveSettings(
-    effect?: SettingEffect | "all",
+    effect?: SettingEffect | "all" | "groups",
     renderers?: SettingDef["renderers"]
   ): Promise<void> {
     await this.plugin.saveSettings();
@@ -323,13 +323,13 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
             .setValue(group.query)
             .onChange(async (value) => {
               group.query = value;
-              await this.saveSettings("rebuild");
+              await this.saveSettings("groups");
             })
         )
         .addColorPicker((picker) =>
           picker.setValue(group.color).onChange(async (value) => {
             group.color = value;
-            await this.saveSettings("rebuild");
+            await this.saveSettings("groups");
           })
         )
         .addButton((button) =>
@@ -338,7 +338,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
             .setWarning()
             .onClick(async () => {
               groups.splice(i, 1);
-              await this.saveSettings("rebuild");
+              await this.saveSettings("groups");
               this.renderGroupSettings(container);
             })
         );
@@ -347,7 +347,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
     new Setting(container).addButton((button) =>
       button.setButtonText("Add group").onClick(async () => {
         groups.push({ query: "", color: "#4363d8" });
-        await this.saveSettings("rebuild");
+        await this.saveSettings("groups");
         this.renderGroupSettings(container);
       })
     );
