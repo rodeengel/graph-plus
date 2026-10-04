@@ -139,6 +139,8 @@ export class GraphRenderer3D {
         });
 
       this.attachFocusInteractions(this.graph.renderer().domElement);
+      const navInfo = this.wrapper.querySelector<HTMLElement>(".scene-nav-info");
+      if (navInfo) navInfo.textContent = "Left-drag: rotate, Wheel/middle-drag: zoom, Right-drag: pan, Middle-click node: focus";
 
       // Configure forces — use forceX/Y/Z instead of forceCenter
       // (forceCenter only shifts center of mass, doesn't pull orphans back)
