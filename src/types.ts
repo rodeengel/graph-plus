@@ -23,10 +23,71 @@ export interface GraphData {
   links: GraphLink[];
 }
 
+export type LinkLineStyle = "solid" | "dashed" | "dotted";
+export type LinkArrowMode = "inherit" | "on" | "off";
+
+/**
+ * Rendering + layout behavior for one semantic relationship type.
+ *
+ * These values deliberately separate:
+ * - meaning (the link type itself)
+ * - appearance (color/style/width/opacity/arrow)
+ * - physics (distance/attraction)
+ *
+ * `forceRule` remains for directional layout rules and backwards compatibility.
+ */
 export interface LinkTypeConfig {
   color: string;
   visible: boolean;
   forceRule?: string;
+  lineStyle: LinkLineStyle;
+  widthMultiplier: number;
+  opacity: number;
+  arrowMode: LinkArrowMode;
+  distanceMultiplier: number;
+  attraction: number;
+}
+
+export const DEFAULT_LINK_TYPE_STYLE = {
+  lineStyle: "solid" as LinkLineStyle,
+  widthMultiplier: 1,
+  opacity: 1,
+  arrowMode: "inherit" as LinkArrowMode,
+  distanceMultiplier: 1,
+  attraction: 1,
+};
+
+export const MAX_EFFECTIVE_LINK_STRENGTH = 2;
+
+/** Keep strong multiplier combinations stable when d3 reheats to alpha 1. */
+export function getEffectiveLinkStrength(baseStrength: number, attraction: number): number {
+  return Math.min(MAX_EFFECTIVE_LINK_STRENGTH, Math.max(0, baseStrength * Math.max(0, attraction)));
+}
+
+export function createLinkTypeConfig(
+  color: string,
+  overrides: Partial<LinkTypeConfig> = {}
+): LinkTypeConfig {
+  return {
+    color,
+    visible: true,
+    ...DEFAULT_LINK_TYPE_STYLE,
+    ...overrides,
+  };
+}
+
+/**
+ * Fill semantic link fields added after Graph Plus 0.1.0.
+ * Mutates the supplied object so existing saved settings migrate in place.
+ */
+export function normalizeLinkTypeConfig(config: LinkTypeConfig | Record<string, any>): LinkTypeConfig {
+  if (config.lineStyle === undefined) config.lineStyle = DEFAULT_LINK_TYPE_STYLE.lineStyle;
+  if (config.widthMultiplier === undefined) config.widthMultiplier = DEFAULT_LINK_TYPE_STYLE.widthMultiplier;
+  if (config.opacity === undefined) config.opacity = DEFAULT_LINK_TYPE_STYLE.opacity;
+  if (config.arrowMode === undefined) config.arrowMode = DEFAULT_LINK_TYPE_STYLE.arrowMode;
+  if (config.distanceMultiplier === undefined) config.distanceMultiplier = DEFAULT_LINK_TYPE_STYLE.distanceMultiplier;
+  if (config.attraction === undefined) config.attraction = DEFAULT_LINK_TYPE_STYLE.attraction;
+  return config as LinkTypeConfig;
 }
 
 export interface ForceRule {
@@ -74,17 +135,17 @@ export interface GraphLinkTypesSettings {
   nodeSize: number;
   chargeStrength: number;
   centerForce: number;      // 0-1, strength of centering force (forceX/forceY)
-  linkStrength: number;     // 0-1, strength of link attraction
-  linkDistance: number;
+  linkStrength: number;     // global base strength; per-type attraction multiplies this
+  linkDistance: number;     // global base distance; per-type distanceMultiplier multiplies this
   nodeGroups: NodeGroup[];
   showArrows: boolean;
   showAttachments: boolean;
   existingOnly: boolean;
   showOrphans: boolean;
-  linkThickness: number;
-  linkOpacity: number;       // 0-1, opacity of links (3D)
-  nodeOpacity3D: number;     // 0-1, opacity of nodes (3D)
-  nodeRelSize3D: number;     // sphere scale factor (3D)
+  linkThickness: number;    // global base width; per-type widthMultiplier multiplies this
+  linkOpacity: number;      // 0-1, global opacity of links (3D)
+  nodeOpacity3D: number;    // 0-1, opacity of nodes (3D)
+  nodeRelSize3D: number;    // sphere scale factor (3D)
   textFadeThreshold: number;
   edgeLabelThreshold: number;
   collisionForce: number;
@@ -155,10 +216,10 @@ export const SETTING_DEFS: SettingDef[] = [
   { key: "showOrphans", label: "Orphans", desc: "Show nodes without any visible links", section: "filters", type: "toggle", effect: "rebuild" },
 
   // Display (shared)
-  { key: "showArrows", label: "Arrows", desc: "Draw directional arrowheads on links", section: "display", type: "toggle", effect: "visual", renderers: "both" },
+  { key: "showArrows", label: "Arrows", desc: "Default arrow behavior for link types set to Inherit", section: "display", type: "toggle", effect: "visual", renderers: "both" },
   { key: "scaleNodeByLinks", label: "Scale by connections", desc: "Make nodes with more links appear larger", section: "display", type: "toggle", effect: "visual", renderers: "both" },
   { key: "nodeSize", label: "Node size", desc: "Base radius of graph nodes (1–20)", section: "display", type: "slider", min: 1, max: 20, step: 1, effect: "visual", renderers: "both" },
-  { key: "linkThickness", label: "Link thickness", desc: "Width of graph edges (0.5–10)", section: "display", type: "slider", min: 0.5, max: 10, step: 0.5, effect: "visual", renderers: "both" },
+  { key: "linkThickness", label: "Base link thickness", desc: "Base width of graph edges before per-type width multipliers (0.5–10)", section: "display", type: "slider", min: 0.5, max: 10, step: 0.5, effect: "visual", renderers: "both" },
 
   // 2D Display
   { key: "showLabels", label: "Edge labels", desc: "Display link type names on edges", section: "display2d", type: "toggle", effect: "visual", renderers: "2d" },
@@ -169,13 +230,13 @@ export const SETTING_DEFS: SettingDef[] = [
   // 3D Display
   { key: "nodeRelSize3D", label: "Node scale", desc: "Size of 3D node spheres (1–20)", section: "display3d", type: "slider", min: 1, max: 20, step: 1, effect: "visual", renderers: "3d" },
   { key: "nodeOpacity3D", label: "Node opacity", desc: "Opacity of 3D nodes (0–1)", section: "display3d", type: "slider", min: 0, max: 1, step: 0.05, effect: "visual", renderers: "3d" },
-  { key: "linkOpacity", label: "Link opacity", desc: "Opacity of 3D links (0–1)", section: "display3d", type: "slider", min: 0, max: 1, step: 0.05, effect: "visual", renderers: "3d" },
+  { key: "linkOpacity", label: "Link opacity", desc: "Global opacity of 3D links (0–1)", section: "display3d", type: "slider", min: 0, max: 1, step: 0.05, effect: "visual", renderers: "3d" },
 
   // Forces
   { key: "centerForce", label: "Center force", desc: "Pull nodes toward center (0–2)", section: "forces", type: "slider", min: 0, max: 2, step: 0.05, effect: "force" },
   { key: "chargeStrength", label: "Repel force", desc: "Push nodes apart (10–2000, higher = more spread)", section: "forces", type: "slider", min: 10, max: 2000, step: 10, effect: "force", invert: true },
-  { key: "linkStrength", label: "Link force", desc: "Strength of link attraction (0–2)", section: "forces", type: "slider", min: 0, max: 2, step: 0.05, effect: "force" },
-  { key: "linkDistance", label: "Link distance", desc: "Preferred distance between linked nodes (5–500)", section: "forces", type: "slider", min: 5, max: 500, step: 5, effect: "force" },
+  { key: "linkStrength", label: "Base link force", desc: "Base link attraction before per-type attraction multipliers (0–2)", section: "forces", type: "slider", min: 0, max: 2, step: 0.05, effect: "force" },
+  { key: "linkDistance", label: "Base link distance", desc: "Base preferred distance before per-type distance multipliers (5–500)", section: "forces", type: "slider", min: 5, max: 500, step: 5, effect: "force" },
   { key: "collisionForce", label: "Collision", desc: "Prevent node overlap (0–1)", section: "forces", type: "slider", min: 0, max: 1, step: 0.05, effect: "force" },
   { key: "animate", label: "Pause physics", desc: "Freeze the force simulation", section: "forces", type: "toggle", effect: "animate", invert: true },
 ];

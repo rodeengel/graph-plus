@@ -1,9 +1,9 @@
 {
-  "id": "graph-plus",
-  "name": "Graph Plus",
-  "version": "0.1.0",
+  "id": "graph-plus-semantic",
+  "name": "Graph Plus Semantic",
+  "version": "0.1.0-semantic.3",
   "minAppVersion": "1.0.0",
-  "description": "Custom force-directed graph view, with typed links parsed from Dataview-style inline fields and frontmatter, in both 2D and 3D.",
-  "author": "Nicolas Ong",
+  "description": "Semantic force-directed graph view with typed relationship styling and per-link-type layout behavior in 2D and 3D.",
+  "author": "Nicolas Ong / rodeengel fork",
   "isDesktopOnly": false
 }

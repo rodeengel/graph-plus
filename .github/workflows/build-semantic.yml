@@ -1,0 +1,42 @@
+name: Build Graph Plus Semantic
+
+on:
+  push:
+    branches:
+      - feature/semantic-links
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build production plugin
+        run: npm run package
+
+      - name: Test source behavior
+        run: npm test
+
+      - name: Verify Obsidian package
+        run: |
+          test -s main.js
+          test -s manifest.json
+          test -s styles.css
+          grep -q '"id": "graph-plus-semantic"' manifest.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: graph-plus-semantic
+          path: dist/

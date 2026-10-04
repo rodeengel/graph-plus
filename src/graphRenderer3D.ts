@@ -1,39 +1,11 @@
 import type { App } from "obsidian";
+import type { ForceGraph3DInstance } from "3d-force-graph";
 import type { GraphNode, GraphLink, GraphData, GraphLinkTypesSettings } from "./types";
-import { UNTYPED_LINK_KEY, parseForceRules, type ForceRule } from "./types";
+import { UNTYPED_LINK_KEY, parseForceRules, getEffectiveLinkStrength, type ForceRule } from "./types";
+import { applyNodeGroups } from "./linkParser";
 import { forceX, forceY } from "d3-force";
-// @ts-ignore — d3-force-3d is a transitive dep of 3d-force-graph
+// @ts-expect-error — d3-force-3d does not ship TypeScript declarations.
 import { forceZ } from "d3-force-3d";
-
-interface ForceGraph3DInstance {
-  graphData(data: { nodes: any[]; links: any[] }): ForceGraph3DInstance;
-  width(w: number): ForceGraph3DInstance;
-  height(h: number): ForceGraph3DInstance;
-  backgroundColor(c: string): ForceGraph3DInstance;
-  nodeColor(fn: (node: any) => string): ForceGraph3DInstance;
-  nodeLabel(fn: (node: any) => string): ForceGraph3DInstance;
-  nodeVal(fn: (node: any) => number): ForceGraph3DInstance;
-  linkColor(fn: (link: any) => string): ForceGraph3DInstance;
-  linkLabel(fn: (link: any) => string): ForceGraph3DInstance;
-  linkWidth(w: number | ((link: any) => number)): ForceGraph3DInstance;
-  linkCurvature(v: number | string | ((link: any) => number)): ForceGraph3DInstance;
-  linkDirectionalParticles(n: number): ForceGraph3DInstance;
-  linkDirectionalArrowLength(n: number | ((link: any) => number)): ForceGraph3DInstance;
-  linkDirectionalArrowRelPos(n: number): ForceGraph3DInstance;
-  linkOpacity(n: number): ForceGraph3DInstance;
-  nodeOpacity(n: number): ForceGraph3DInstance;
-  nodeRelSize(n: number): ForceGraph3DInstance;
-  onNodeClick(fn: (node: any) => void): ForceGraph3DInstance;
-  onNodeRightClick(fn: (node: any) => void): ForceGraph3DInstance;
-  nodeThreeObject(fn: ((node: any) => any) | null): ForceGraph3DInstance;
-  nodeThreeObjectExtend(v: boolean): ForceGraph3DInstance;
-  d3Force(name: string, force?: any): any;
-  d3ReheatSimulation(): ForceGraph3DInstance;
-  zoomToFit(ms?: number, padding?: number): ForceGraph3DInstance;
-  _destructor?(): void;
-  pauseAnimation?(): void;
-  resumeAnimation?(): void;
-}
 
 export class GraphRenderer3D {
   private container: HTMLElement;
@@ -53,7 +25,7 @@ export class GraphRenderer3D {
     this.settings = settings;
 
     this.wrapper = document.createElement("div");
-    this.wrapper.className = "glt-3d-container";
+    this.wrapper.className = "gps-3d-container";
     this.wrapper.style.width = "100%";
     this.wrapper.style.height = "100%";
     this.container.appendChild(this.wrapper);
@@ -74,6 +46,18 @@ export class GraphRenderer3D {
     if (!this.settings.scaleNodeByLinks || !node.linkCount) return base;
     const s = 1 + Math.sqrt(Math.max(0, node.linkCount - 1)) * 0.5;
     return base * s * s * s;
+  }
+
+  private getLinkWidth(link: any): number {
+    const multiplier = this.settings.linkTypes[link.type]?.widthMultiplier ?? 1;
+    return Math.max(0.1, this.settings.linkThickness * multiplier);
+  }
+
+  private shouldShowArrow(link: any): boolean {
+    const mode = this.settings.linkTypes[link.type]?.arrowMode ?? "inherit";
+    if (mode === "on") return true;
+    if (mode === "off") return false;
+    return this.settings.showArrows;
   }
 
   private nodeThreeObjectFn = (node: any): any => {
@@ -104,7 +88,7 @@ export class GraphRenderer3D {
       if (this.destroyed) return;
 
       const rect = this.wrapper.getBoundingClientRect();
-      this.graph = ForceGraph3D()(this.wrapper)
+      this.graph = new ForceGraph3D(this.wrapper)
         .width(rect.width)
         .height(rect.height)
         .backgroundColor("rgba(0,0,0,0)")
@@ -123,9 +107,11 @@ export class GraphRenderer3D {
           if (link.type === UNTYPED_LINK_KEY) return "";
           return link.type;
         })
-        .linkWidth(this.settings.linkThickness)
+        .linkWidth((link: any) => this.getLinkWidth(link))
         .linkCurvature((link: any) => link.curvature ?? 0)
-        .linkDirectionalArrowLength(this.settings.showArrows ? 6 * (this.settings.linkThickness / 1.5) : 0)
+        .linkDirectionalArrowLength((link: any) =>
+          this.shouldShowArrow(link) ? 6 * (this.getLinkWidth(link) / 1.5) : 0
+        )
         .linkDirectionalArrowRelPos(1)
         .linkOpacity(this.settings.linkOpacity)
         .nodeOpacity(this.settings.nodeOpacity3D)
@@ -151,7 +137,7 @@ export class GraphRenderer3D {
       const linkForce = this.graph.d3Force("link");
       if (linkForce) {
         linkForce.distance((l: any) => this.getLinkDistance(l));
-        linkForce.strength(this.settings.linkStrength);
+        linkForce.strength((l: any) => this.getLinkStrength(l));
       }
 
       // Custom link-type directional forces
@@ -163,7 +149,7 @@ export class GraphRenderer3D {
         this.pendingData = null;
       }
     } catch (err) {
-      console.error("Graph Link Types: Failed to initialize 3D renderer", err);
+      console.error("Graph Plus Semantic: Failed to initialize 3D renderer", err);
       this.wrapper.textContent = "3D rendering unavailable. Check console for errors.";
     }
   }
@@ -189,6 +175,7 @@ export class GraphRenderer3D {
       groupColor: n.groupColor,
       exists: n.exists,
       tags: n.tags,
+      properties: n.properties,
       isAttachment: n.isAttachment,
       linkCount: n.linkCount,
     }));
@@ -208,13 +195,32 @@ export class GraphRenderer3D {
     if (!this.graph) return;
 
     this.graph
-      .linkWidth(this.settings.linkThickness)
-      .linkDirectionalArrowLength(this.settings.showArrows ? 6 * (this.settings.linkThickness / 1.5) : 0)
+      .linkWidth((link: any) => this.getLinkWidth(link))
+      .linkDirectionalArrowLength((link: any) =>
+        this.shouldShowArrow(link) ? 6 * (this.getLinkWidth(link) / 1.5) : 0
+      )
       .linkOpacity(this.settings.linkOpacity)
       .nodeOpacity(this.settings.nodeOpacity3D)
       .nodeRelSize(this.settings.nodeRelSize3D)
       .nodeVal((node: any) => this.getNodeVal(node))
       .nodeThreeObject(this.nodeThreeObjectFn);
+  }
+
+  /** Recolor the current nodes without replacing data or reheating physics. */
+  updateNodeGroups(): void {
+    if (this.destroyed) return;
+    if (!this.graph) {
+      if (this.pendingData) {
+        applyNodeGroups(this.pendingData.nodes, this.settings.nodeGroups);
+      }
+      return;
+    }
+
+    applyNodeGroups(this.graph.graphData().nodes as GraphNode[], this.settings.nodeGroups);
+    this.graph
+      .nodeColor((node: any) => node.groupColor || this.settings.nodeColor)
+      // A new accessor invalidates custom wireframes as well as default spheres.
+      .nodeThreeObject((node: any) => this.nodeThreeObjectFn(node));
   }
 
   /** Update force parameters and reheat the simulation */
@@ -236,7 +242,7 @@ export class GraphRenderer3D {
     const linkForce = this.graph.d3Force("link");
     if (linkForce) {
       linkForce.distance((l: any) => this.getLinkDistance(l));
-      linkForce.strength(this.settings.linkStrength);
+      linkForce.strength((l: any) => this.getLinkStrength(l));
     }
 
     this.graph.d3ReheatSimulation();
@@ -258,12 +264,21 @@ export class GraphRenderer3D {
   }
 
   private getLinkDistance(link: any): number {
+    const config = this.settings.linkTypes[link.type];
+    let multiplier = config?.distanceMultiplier ?? 1;
+
     const rules = this.forceRuleCache.get(link.type);
     if (rules) {
       const distRule = rules.find((r) => r.type === "distance");
-      if (distRule) return this.settings.linkDistance * distRule.value;
+      if (distRule) multiplier *= distRule.value;
     }
-    return this.settings.linkDistance;
+
+    return this.settings.linkDistance * Math.max(0.01, multiplier);
+  }
+
+  private getLinkStrength(link: any): number {
+    const attraction = this.settings.linkTypes[link.type]?.attraction ?? 1;
+    return getEffectiveLinkStrength(this.settings.linkStrength, attraction);
   }
 
   private createLinkTypeForce(): (alpha: number) => void {

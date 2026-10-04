@@ -1,20 +1,35 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
-import type GraphLinkTypesPlugin from "./main";
-import { COLOR_PALETTE, UNTYPED_LINK_KEY, SETTING_DEFS } from "./types";
+import type GraphPlusSemanticPlugin from "./main";
+import type { LinkArrowMode, LinkLineStyle, SettingDef, SettingEffect } from "./types";
+import { COLOR_PALETTE, UNTYPED_LINK_KEY, SETTING_DEFS, DEFAULT_LINK_TYPE_STYLE } from "./types";
+import { GraphLinkTypesView, VIEW_TYPE } from "./graphView";
 
 export class GraphLinkTypesSettingTab extends PluginSettingTab {
-  plugin: GraphLinkTypesPlugin;
+  plugin: GraphPlusSemanticPlugin;
 
-  constructor(app: App, plugin: GraphLinkTypesPlugin) {
+  constructor(app: App, plugin: GraphPlusSemanticPlugin) {
     super(app, plugin);
     this.plugin = plugin;
+  }
+
+  private async saveSettings(
+    effect?: SettingEffect | "all" | "groups",
+    renderers?: SettingDef["renderers"]
+  ): Promise<void> {
+    await this.plugin.saveSettings();
+    if (!effect) return;
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+      if (leaf.view instanceof GraphLinkTypesView) {
+        leaf.view.refreshSettings(effect, renderers);
+      }
+    }
   }
 
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
 
-    new Setting(containerEl).setHeading().setName("Graph Link Types");
+    new Setting(containerEl).setHeading().setName("Graph Plus Semantic");
 
     // --- General (manual — unique control types) ---
     new Setting(containerEl)
@@ -27,7 +42,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.defaultMode)
           .onChange(async (value) => {
             this.plugin.settings.defaultMode = value as "2d" | "3d";
-            await this.plugin.saveSettings();
+            await this.saveSettings();
           })
       );
 
@@ -39,7 +54,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.showUntyped)
           .onChange(async (value) => {
             this.plugin.settings.showUntyped = value;
-            await this.plugin.saveSettings();
+            await this.saveSettings("rebuild");
           })
       );
 
@@ -56,7 +71,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.nodeColor)
           .onChange(async (value) => {
             this.plugin.settings.nodeColor = value;
-            await this.plugin.saveSettings();
+            await this.saveSettings("visual");
           })
       );
 
@@ -68,7 +83,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.nodeColorHover)
           .onChange(async (value) => {
             this.plugin.settings.nodeColorHover = value;
-            await this.plugin.saveSettings();
+            await this.saveSettings("visual", "2d");
           })
       );
 
@@ -94,8 +109,12 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
     const groupContainer = containerEl.createDiv();
     this.renderGroupSettings(groupContainer);
 
-    // --- Link type colors (manual — dynamic from data) ---
-    new Setting(containerEl).setHeading().setName("Link type colors");
+    // --- Relationship type styling + physics ---
+    new Setting(containerEl).setHeading().setName("Relationship types");
+    containerEl.createEl("p", {
+      text: "Each typed link can have independent appearance and layout behavior. Line style and per-type opacity are currently 2D-only; width, arrows, distance and attraction also affect 3D.",
+      cls: "setting-item-description",
+    });
 
     const types = Object.keys(this.plugin.settings.linkTypes).sort((a, b) => {
       if (a === UNTYPED_LINK_KEY) return 1;
@@ -109,10 +128,11 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
 
       new Setting(containerEl)
         .setName(displayName)
+        .setDesc("Visibility and relationship color")
         .addColorPicker((picker) =>
           picker.setValue(config.color).onChange(async (value) => {
             config.color = value;
-            await this.plugin.saveSettings();
+            await this.saveSettings("visual");
           })
         )
         .addToggle((toggle) =>
@@ -129,23 +149,119 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
               } else {
                 config.visible = value;
               }
-              await this.plugin.saveSettings();
+              await this.saveSettings("rebuild");
+            })
+        );
+
+      new Setting(containerEl)
+        .setName(`${displayName}: appearance`)
+        .setDesc("2D line pattern and per-type arrow behavior")
+        .addDropdown((dropdown) =>
+          dropdown
+            .addOption("solid", "Solid")
+            .addOption("dashed", "Dashed")
+            .addOption("dotted", "Dotted")
+            .setValue(config.lineStyle)
+            .onChange(async (value) => {
+              config.lineStyle = value as LinkLineStyle;
+              await this.saveSettings("visual", "2d");
             })
         )
+        .addDropdown((dropdown) =>
+          dropdown
+            .addOption("inherit", "Arrow: inherit")
+            .addOption("on", "Arrow: on")
+            .addOption("off", "Arrow: off")
+            .setValue(config.arrowMode)
+            .onChange(async (value) => {
+              config.arrowMode = value as LinkArrowMode;
+              await this.saveSettings("visual");
+            })
+        );
+
+      new Setting(containerEl)
+        .setName(`${displayName}: width`)
+        .setDesc("Multiplier applied to the global base link thickness")
+        .addSlider((slider) =>
+          slider
+            .setLimits(0.1, 5, 0.1)
+            .setValue(config.widthMultiplier)
+            .setDynamicTooltip()
+            .onChange(async (value) => {
+              config.widthMultiplier = value;
+              await this.saveSettings("visual");
+            })
+        );
+
+      new Setting(containerEl)
+        .setName(`${displayName}: opacity`)
+        .setDesc("2D relationship opacity")
+        .addSlider((slider) =>
+          slider
+            .setLimits(0, 1, 0.05)
+            .setValue(config.opacity)
+            .setDynamicTooltip()
+            .onChange(async (value) => {
+              config.opacity = value;
+              await this.saveSettings("visual", "2d");
+            })
+        );
+
+      new Setting(containerEl)
+        .setName(`${displayName}: distance`)
+        .setDesc("Multiplier applied to the global preferred link distance")
+        .addSlider((slider) =>
+          slider
+            .setLimits(0.1, 5, 0.1)
+            .setValue(config.distanceMultiplier)
+            .setDynamicTooltip()
+            .onChange(async (value) => {
+              config.distanceMultiplier = value;
+              await this.saveSettings("force");
+            })
+        );
+
+      new Setting(containerEl)
+        .setName(`${displayName}: attraction`)
+        .setDesc("Base force × attraction, capped at 2 for layout stability. Set 0 to remove the normal spring pull.")
+        .addSlider((slider) =>
+          slider
+            .setLimits(0, 3, 0.1)
+            .setValue(config.attraction)
+            .setDynamicTooltip()
+            .onChange(async (value) => {
+              config.attraction = value;
+              await this.saveSettings("force");
+            })
+        );
+
+      new Setting(containerEl)
+        .setName(`${displayName}: advanced force rule`)
+        .setDesc("Optional directional rules such as down:0.5 right:1. Legacy distance:Nx is multiplied with the explicit distance multiplier.")
         .addText((text) =>
           text
-            .setPlaceholder("e.g. down:0.5 distance:2x")
+            .setPlaceholder("e.g. down:0.5 right:1")
             .setValue(config.forceRule || "")
             .onChange(async (value) => {
               config.forceRule = value.trim() || undefined;
-              await this.plugin.saveSettings();
+              await this.saveSettings("force");
             })
         );
+
+      new Setting(containerEl).addButton((button) =>
+        button
+          .setButtonText(`Reset ${displayName} semantic style`)
+          .onClick(async () => {
+            Object.assign(config, DEFAULT_LINK_TYPE_STYLE);
+            await this.saveSettings("all");
+            this.display();
+          })
+      );
     }
 
     new Setting(containerEl).addButton((button) =>
       button
-        .setButtonText("Reset colors to defaults")
+        .setButtonText("Reset relationship colors to defaults")
         .onClick(async () => {
           let i = 0;
           for (const type of Object.keys(this.plugin.settings.linkTypes)) {
@@ -153,7 +269,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
               COLOR_PALETTE[i % COLOR_PALETTE.length];
             i++;
           }
-          await this.plugin.saveSettings();
+          await this.saveSettings("visual");
           this.display();
         })
     );
@@ -171,7 +287,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           .addToggle((toggle) =>
             toggle.setValue(def.invert ? !raw : raw).onChange(async (value) => {
               (this.plugin.settings as any)[def.key] = def.invert ? !value : value;
-              await this.plugin.saveSettings();
+              await this.saveSettings(def.effect, def.renderers);
             })
           );
       } else if (def.type === "slider") {
@@ -186,7 +302,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
               .setDynamicTooltip()
               .onChange(async (value) => {
                 (this.plugin.settings as any)[def.key] = def.invert ? -value : value;
-                await this.plugin.saveSettings();
+                await this.saveSettings(def.effect, def.renderers);
               })
           );
       }
@@ -207,13 +323,13 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
             .setValue(group.query)
             .onChange(async (value) => {
               group.query = value;
-              await this.plugin.saveSettings();
+              await this.saveSettings("groups");
             })
         )
         .addColorPicker((picker) =>
           picker.setValue(group.color).onChange(async (value) => {
             group.color = value;
-            await this.plugin.saveSettings();
+            await this.saveSettings("groups");
           })
         )
         .addButton((button) =>
@@ -222,7 +338,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
             .setWarning()
             .onClick(async () => {
               groups.splice(i, 1);
-              await this.plugin.saveSettings();
+              await this.saveSettings("groups");
               this.renderGroupSettings(container);
             })
         );
@@ -231,7 +347,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
     new Setting(container).addButton((button) =>
       button.setButtonText("Add group").onClick(async () => {
         groups.push({ query: "", color: "#4363d8" });
-        await this.plugin.saveSettings();
+        await this.saveSettings("groups");
         this.renderGroupSettings(container);
       })
     );
