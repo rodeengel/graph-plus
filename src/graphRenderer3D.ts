@@ -53,7 +53,7 @@ export class GraphRenderer3D {
     this.settings = settings;
 
     this.wrapper = document.createElement("div");
-    this.wrapper.className = "glt-3d-container";
+    this.wrapper.className = "gps-3d-container";
     this.wrapper.style.width = "100%";
     this.wrapper.style.height = "100%";
     this.container.appendChild(this.wrapper);
@@ -74,6 +74,18 @@ export class GraphRenderer3D {
     if (!this.settings.scaleNodeByLinks || !node.linkCount) return base;
     const s = 1 + Math.sqrt(Math.max(0, node.linkCount - 1)) * 0.5;
     return base * s * s * s;
+  }
+
+  private getLinkWidth(link: any): number {
+    const multiplier = this.settings.linkTypes[link.type]?.widthMultiplier ?? 1;
+    return Math.max(0.1, this.settings.linkThickness * multiplier);
+  }
+
+  private shouldShowArrow(link: any): boolean {
+    const mode = this.settings.linkTypes[link.type]?.arrowMode ?? "inherit";
+    if (mode === "on") return true;
+    if (mode === "off") return false;
+    return this.settings.showArrows;
   }
 
   private nodeThreeObjectFn = (node: any): any => {
@@ -123,9 +135,11 @@ export class GraphRenderer3D {
           if (link.type === UNTYPED_LINK_KEY) return "";
           return link.type;
         })
-        .linkWidth(this.settings.linkThickness)
+        .linkWidth((link: any) => this.getLinkWidth(link))
         .linkCurvature((link: any) => link.curvature ?? 0)
-        .linkDirectionalArrowLength(this.settings.showArrows ? 6 * (this.settings.linkThickness / 1.5) : 0)
+        .linkDirectionalArrowLength((link: any) =>
+          this.shouldShowArrow(link) ? 6 * (this.getLinkWidth(link) / 1.5) : 0
+        )
         .linkDirectionalArrowRelPos(1)
         .linkOpacity(this.settings.linkOpacity)
         .nodeOpacity(this.settings.nodeOpacity3D)
@@ -151,7 +165,7 @@ export class GraphRenderer3D {
       const linkForce = this.graph.d3Force("link");
       if (linkForce) {
         linkForce.distance((l: any) => this.getLinkDistance(l));
-        linkForce.strength(this.settings.linkStrength);
+        linkForce.strength((l: any) => this.getLinkStrength(l));
       }
 
       // Custom link-type directional forces
@@ -163,7 +177,7 @@ export class GraphRenderer3D {
         this.pendingData = null;
       }
     } catch (err) {
-      console.error("Graph Link Types: Failed to initialize 3D renderer", err);
+      console.error("Graph Plus Semantic: Failed to initialize 3D renderer", err);
       this.wrapper.textContent = "3D rendering unavailable. Check console for errors.";
     }
   }
@@ -208,8 +222,10 @@ export class GraphRenderer3D {
     if (!this.graph) return;
 
     this.graph
-      .linkWidth(this.settings.linkThickness)
-      .linkDirectionalArrowLength(this.settings.showArrows ? 6 * (this.settings.linkThickness / 1.5) : 0)
+      .linkWidth((link: any) => this.getLinkWidth(link))
+      .linkDirectionalArrowLength((link: any) =>
+        this.shouldShowArrow(link) ? 6 * (this.getLinkWidth(link) / 1.5) : 0
+      )
       .linkOpacity(this.settings.linkOpacity)
       .nodeOpacity(this.settings.nodeOpacity3D)
       .nodeRelSize(this.settings.nodeRelSize3D)
@@ -236,7 +252,7 @@ export class GraphRenderer3D {
     const linkForce = this.graph.d3Force("link");
     if (linkForce) {
       linkForce.distance((l: any) => this.getLinkDistance(l));
-      linkForce.strength(this.settings.linkStrength);
+      linkForce.strength((l: any) => this.getLinkStrength(l));
     }
 
     this.graph.d3ReheatSimulation();
@@ -258,12 +274,21 @@ export class GraphRenderer3D {
   }
 
   private getLinkDistance(link: any): number {
+    const config = this.settings.linkTypes[link.type];
+    let multiplier = config?.distanceMultiplier ?? 1;
+
     const rules = this.forceRuleCache.get(link.type);
     if (rules) {
       const distRule = rules.find((r) => r.type === "distance");
-      if (distRule) return this.settings.linkDistance * distRule.value;
+      if (distRule) multiplier *= distRule.value;
     }
-    return this.settings.linkDistance;
+
+    return this.settings.linkDistance * Math.max(0.01, multiplier);
+  }
+
+  private getLinkStrength(link: any): number {
+    const attraction = this.settings.linkTypes[link.type]?.attraction ?? 1;
+    return this.settings.linkStrength * Math.max(0, attraction);
   }
 
   private createLinkTypeForce(): (alpha: number) => void {
