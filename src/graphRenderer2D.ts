@@ -11,7 +11,14 @@ import { select, pointer } from "d3-selection";
 import { zoom, zoomIdentity, type ZoomBehavior, type D3ZoomEvent } from "d3-zoom";
 import { drag, type D3DragEvent } from "d3-drag";
 import type { App } from "obsidian";
-import type { GraphNode, GraphLink, GraphData, GraphLinkTypesSettings } from "./types";
+import type {
+  GraphNode,
+  GraphLink,
+  GraphData,
+  GraphLinkTypesSettings,
+  LinkTypeConfig,
+  LinkLineStyle,
+} from "./types";
 import { UNTYPED_LINK_KEY, parseForceRules, type ForceRule } from "./types";
 
 export class GraphRenderer2D {
@@ -61,7 +68,7 @@ export class GraphRenderer2D {
 
     // Tooltip
     this.tooltip = document.createElement("div");
-    this.tooltip.className = "glt-tooltip";
+    this.tooltip.className = "gps-tooltip";
     this.tooltip.style.display = "none";
     this.container.appendChild(this.tooltip);
 
@@ -150,7 +157,7 @@ export class GraphRenderer2D {
       forceLink<GraphNode, GraphLink>(this.links)
         .id((d) => d.id)
         .distance((l: any) => this.getLinkDistance(l))
-        .strength(this.settings.linkStrength)
+        .strength((l: any) => this.getLinkStrength(l))
     );
     this.simulation.alpha(1).restart();
 
@@ -181,7 +188,7 @@ export class GraphRenderer2D {
     const link = this.simulation.force("link") as any;
     if (link) {
       link.distance((l: any) => this.getLinkDistance(l));
-      link.strength(this.settings.linkStrength);
+      link.strength((l: any) => this.getLinkStrength(l));
     }
 
     const collide = this.simulation.force("collide") as any;
@@ -267,6 +274,38 @@ export class GraphRenderer2D {
     return this.settings.nodeColor;
   }
 
+  private getLinkConfig(link: GraphLink): LinkTypeConfig | undefined {
+    return this.settings.linkTypes[link.type];
+  }
+
+  private getLinkWidth(link: GraphLink): number {
+    const multiplier = this.getLinkConfig(link)?.widthMultiplier ?? 1;
+    return Math.max(0.1, this.settings.linkThickness * multiplier);
+  }
+
+  private getLinkOpacity(link: GraphLink): number {
+    const opacity = this.getLinkConfig(link)?.opacity ?? 1;
+    return Math.max(0, Math.min(1, opacity));
+  }
+
+  private shouldShowArrow(link: GraphLink): boolean {
+    const mode = this.getLinkConfig(link)?.arrowMode ?? "inherit";
+    if (mode === "on") return true;
+    if (mode === "off") return false;
+    return this.settings.showArrows;
+  }
+
+  private getLineDash(style: LinkLineStyle | undefined, width: number): number[] {
+    switch (style) {
+      case "dashed":
+        return [Math.max(4, width * 4), Math.max(3, width * 2.5)];
+      case "dotted":
+        return [Math.max(1, width), Math.max(3, width * 2.5)];
+      default:
+        return [];
+    }
+  }
+
   private render(): void {
     if (this.destroyed) return;
     const ctx = this.ctx;
@@ -279,8 +318,6 @@ export class GraphRenderer2D {
 
     const showLabels = this.settings.showLabels;
     const showNodeLabels = this.settings.showNodeLabels;
-    const showArrows = this.settings.showArrows;
-    const linkThickness = this.settings.linkThickness;
     const textFadeThreshold = this.settings.textFadeThreshold;
     const hoveredId = this.hoveredNode?.id;
 
@@ -304,22 +341,25 @@ export class GraphRenderer2D {
       const target = link.target as GraphNode;
       if (source.x == null || target.x == null) continue;
 
-      const config = this.settings.linkTypes[link.type];
+      const config = this.getLinkConfig(link);
       const color = config?.color ?? "#888";
+      const linkWidth = this.getLinkWidth(link);
+      const drawArrow = this.shouldShowArrow(link);
 
-      let alpha = 1;
+      let alpha = this.getLinkOpacity(link);
       if (hoveredId) {
         const sId = source.id;
         const tId = target.id;
         if (sId !== hoveredId && tId !== hoveredId) {
-          alpha = 0.1;
+          alpha *= 0.1;
         }
       }
 
       ctx.beginPath();
       ctx.strokeStyle = color;
       ctx.globalAlpha = alpha;
-      ctx.lineWidth = linkThickness;
+      ctx.lineWidth = linkWidth;
+      ctx.setLineDash(this.getLineDash(config?.lineStyle, linkWidth));
 
       const sx = source.x!;
       const sy = source.y!;
@@ -345,8 +385,10 @@ export class GraphRenderer2D {
         ctx.quadraticCurveTo(cpx, cpy, tx, ty);
         ctx.stroke();
 
-        if (showArrows) {
-          this.drawArrowhead(ctx, cpx, cpy, tx, ty, targetRadius, color, alpha);
+        // Arrowheads should never inherit the dash pattern.
+        ctx.setLineDash([]);
+        if (drawArrow) {
+          this.drawArrowhead(ctx, cpx, cpy, tx, ty, targetRadius, color, alpha, linkWidth);
         }
 
         if (showLabels && link.type !== UNTYPED_LINK_KEY && t.k > this.settings.edgeLabelThreshold) {
@@ -369,8 +411,10 @@ export class GraphRenderer2D {
         ctx.lineTo(tx, ty);
         ctx.stroke();
 
-        if (showArrows) {
-          this.drawArrowhead(ctx, sx, sy, tx, ty, targetRadius, color, alpha);
+        // Arrowheads should never inherit the dash pattern.
+        ctx.setLineDash([]);
+        if (drawArrow) {
+          this.drawArrowhead(ctx, sx, sy, tx, ty, targetRadius, color, alpha, linkWidth);
         }
 
         if (showLabels && link.type !== UNTYPED_LINK_KEY && t.k > this.settings.edgeLabelThreshold) {
@@ -389,6 +433,7 @@ export class GraphRenderer2D {
         }
       }
 
+      ctx.setLineDash([]);
       ctx.globalAlpha = 1;
     }
 
@@ -448,14 +493,15 @@ export class GraphRenderer2D {
     ctx.restore();
   }
 
-  /** Draw a filled triangle arrowhead, scaled by link thickness */
+  /** Draw a filled triangle arrowhead, scaled by the effective link width */
   private drawArrowhead(
     ctx: CanvasRenderingContext2D,
     fromX: number, fromY: number,
     toX: number, toY: number,
     nodeRadius: number,
     color: string,
-    alpha: number
+    alpha: number,
+    linkWidth: number
   ): void {
     const dx = toX - fromX;
     const dy = toY - fromY;
@@ -468,8 +514,8 @@ export class GraphRenderer2D {
     const tipX = toX - ux * (nodeRadius + 2);
     const tipY = toY - uy * (nodeRadius + 2);
 
-    // Scale arrowhead with link thickness
-    const scale = this.settings.linkThickness / 1.5; // normalize to default thickness
+    // Scale arrowhead with effective link thickness
+    const scale = linkWidth / 1.5; // normalize to the historical default thickness
     const arrowLen = 8 * scale;
     const arrowWidth = 4 * scale;
 
@@ -551,12 +597,12 @@ export class GraphRenderer2D {
     if (!node) return;
 
     const menu = document.createElement("div");
-    menu.className = "glt-context-menu";
+    menu.className = "gps-context-menu";
     menu.style.left = `${event.clientX - this.container.getBoundingClientRect().left}px`;
     menu.style.top = `${event.clientY - this.container.getBoundingClientRect().top}px`;
 
     const openItem = document.createElement("div");
-    openItem.className = "glt-context-menu-item";
+    openItem.className = "gps-context-menu-item";
     openItem.textContent = "Open note";
     openItem.addEventListener("click", () => {
       this.app.workspace.openLinkText(node.id, "", false);
@@ -564,7 +610,7 @@ export class GraphRenderer2D {
     });
 
     const openNewTab = document.createElement("div");
-    openNewTab.className = "glt-context-menu-item";
+    openNewTab.className = "gps-context-menu-item";
     openNewTab.textContent = "Open in new tab";
     openNewTab.addEventListener("click", () => {
       this.app.workspace.openLinkText(node.id, "", "tab");
@@ -594,12 +640,23 @@ export class GraphRenderer2D {
   }
 
   private getLinkDistance(link: any): number {
+    const config = this.settings.linkTypes[link.type];
+    let multiplier = config?.distanceMultiplier ?? 1;
+
+    // Backwards compatibility: distance:Nx in the advanced force rule
+    // is multiplied with the explicit semantic distance multiplier.
     const rules = this.forceRuleCache.get(link.type);
     if (rules) {
       const distRule = rules.find((r) => r.type === "distance");
-      if (distRule) return this.settings.linkDistance * distRule.value;
+      if (distRule) multiplier *= distRule.value;
     }
-    return this.settings.linkDistance;
+
+    return this.settings.linkDistance * Math.max(0.01, multiplier);
+  }
+
+  private getLinkStrength(link: any): number {
+    const attraction = this.settings.linkTypes[link.type]?.attraction ?? 1;
+    return this.settings.linkStrength * Math.max(0, attraction);
   }
 
   private createLinkTypeForce(): (alpha: number) => void {
