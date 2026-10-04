@@ -535,6 +535,124 @@ test("region availability follows projection and mode in place in sidebar and op
   f.tab.hide();
 });
 
+test("3D enclosures default off with independent fill and visual-only controls that retain editors and navigation", async () => {
+  const f = fixture({ defaultMode: "3d", hyperrelationRegions: true, regionFillOpacity: 0.14,
+    nodeGroups: [{ query: "file:A", color: "#112233" }] });
+  const panel = realSidebar(f);
+  const groupContent = section(panel, "Groups").content;
+  const query = groupContent.find(element => element.className === "gps-group-query-input");
+  await section(panel, "Relationship Types").header.fire("click");
+  panel.scrollTop = 260;
+  assert.equal(f.settings.hyperrelationEnclosures3D, false);
+  assert.equal(f.settings.enclosureFillOpacity3D, 0.06);
+  assert.deepEqual(f.control("Enclosure fill opacity").limits, { min: 0, max: 0.3, step: 0.01 });
+  const toggle = sidebarControl(panel, "Relationship enclosures");
+  const slider = sidebarControl(panel, "Enclosure fill opacity");
+  assert.equal(toggle.disabled, false);
+  assert.equal(slider.disabled, true);
+  await f.control("Relationship enclosures", "toggle").change(true);
+  await f.control("Enclosure fill opacity").change(0.12);
+  assert.equal(sidebarControl(panel, "Relationship enclosures"), toggle);
+  assert.equal(sidebarControl(panel, "Enclosure fill opacity"), slider);
+  assert.equal(toggle.checked, true);
+  assert.equal(slider.value, "0.12");
+  assert.equal(slider.disabled, false);
+  toggle.checked = false;
+  await toggle.fire("change");
+  assert.equal(f.settings.hyperrelationEnclosures3D, false);
+  assert.equal(slider.disabled, true);
+  assert.equal(f.settings.hyperrelationRegions, true);
+  assert.equal(f.settings.regionFillOpacity, 0.14, "Spatial enclosures do not change the alternate 2D region preference");
+  assert.equal(groupContent.find(element => element.className === "gps-group-query-input"), query);
+  assert.equal(section(panel, "Relationship Types").content.style.display, "none");
+  assert.equal(section(panel, "3D Display").content.style.display, "none");
+  assert.equal(panel.scrollTop, 260);
+  assert.deepEqual(f.calls.map(call => [call.mode, call.effect]), [["3d", "visual"], ["3d", "visual"], ["3d", "visual"]]);
+  assert.equal(f.reads(), 0);
+  assert.deepEqual(f.opened, []);
+  f.tab.hide();
+});
+
+test("3D enclosure availability tracks junctions and view mode in existing sidebar and settings controls", async () => {
+  const f = fixture({ defaultMode: "3d", hyperrelationEnclosures3D: true });
+  const panel = realSidebar(f);
+  const toggle = sidebarControl(panel, "Relationship enclosures");
+  const slider = sidebarControl(panel, "Enclosure fill opacity");
+  const status = f.view.enclosureStatusEl;
+  assert.equal(toggle.disabled, false);
+  assert.equal(slider.disabled, false);
+  await f.control("Relationship junctions", "toggle", 1).change(false);
+  assert.equal(toggle.disabled, true);
+  assert.equal(slider.disabled, true);
+  assert.equal(f.control("Relationship enclosures", "toggle").disabled, true);
+  assert.match(status.textContent, /standard 3D graph/);
+  await f.control("Relationship junctions", "toggle", 1).change(true);
+  assert.equal(toggle.disabled, false);
+  assert.equal(slider.disabled, false);
+  f.view.initRenderer = () => {};
+  await f.view.modeBtnEl.fire("click");
+  assert.equal(f.view.currentMode, "2d");
+  assert.equal(sidebarControl(panel, "Relationship enclosures"), toggle);
+  assert.equal(f.view.enclosureStatusEl, status);
+  assert.equal(toggle.disabled, true);
+  assert.equal(slider.disabled, true);
+  assert.equal(f.control("Relationship enclosures", "toggle").disabled, true);
+  assert.match(status.textContent, /2D/);
+  assert.match(f.tab.enclosureStatusEl.textContent, /2D/);
+  await f.view.modeBtnEl.fire("click");
+  assert.equal(toggle.disabled, false);
+  assert.equal(slider.disabled, false);
+  assert.equal(f.control("Relationship enclosures", "toggle").disabled, false);
+  assert.equal(f.settings.hyperrelationEnclosures3D, true, "Unavailable contexts retain the saved spatial preference");
+  assert.equal(f.reads(), 0);
+  f.tab.hide();
+});
+
+test("3D enclosure profiles survive JSON reload and preserve paused data, inactive 2D preferences and editor closures", async () => {
+  const saved = fixture({ defaultMode: "3d", animate: false, hyperrelationEnclosures3D: true,
+    enclosureFillOpacity3D: 0.15, nodeGroups: [{ query: "file:A", color: "#112233" }] });
+  const profileEditor = new HostElement();
+  saved.view.buildProfileEditor(profileEditor);
+  profileEditor.find(element => element.placeholder === "Profile name").value = "spatial enclosures";
+  await profileEditor.find(element => element.text === "Save").fire("click");
+  const persisted = copy(saved.saved.at(-1));
+  assert.equal(persisted.profiles[0].snapshot.hyperrelationEnclosures3D, true);
+  assert.equal(persisted.profiles[0].snapshot.enclosureFillOpacity3D, 0.15);
+  const f = fixture({ ...persisted, hyperrelationEnclosures3D: false, enclosureFillOpacity3D: 0.06,
+    hyperrelationRegions: true, regionFillOpacity: 0.2 });
+  f.view.renderer2D = null;
+  await f.view.rebuildGraph();
+  const data = f.view.renderer3D.data, reads = f.reads();
+  f.calls.length = 0;
+  const panel = realSidebar(f);
+  const groups = f.settings.nodeGroups;
+  const content = section(panel, "Groups").content;
+  const color = content.find(element => element.type === "color");
+  await section(panel, "Relationship Types").header.fire("click");
+  panel.scrollTop = 190;
+  await f.view.loadProfile(f.settings.profiles[0]);
+  assert.equal(f.settings.hyperrelationEnclosures3D, true);
+  assert.equal(f.settings.enclosureFillOpacity3D, 0.15);
+  assert.equal(f.settings.hyperrelationRegions, false);
+  assert.equal(f.settings.regionFillOpacity, 0.08);
+  assert.equal(f.settings.animate, false);
+  assert.strictEqual(f.view.renderer3D.data, data);
+  assert.equal(f.settings.nodeGroups, groups);
+  assert.equal(section(panel, "Groups").content, content);
+  assert.equal(section(panel, "Relationship Types").content.style.display, "none");
+  assert.equal(panel.scrollTop, 190);
+  assert.equal(sidebarControl(panel, "Enclosure fill opacity").value, "0.15");
+  assert.equal(f.reads(), reads);
+  assert.deepEqual(f.calls.map(call => [call.mode, call.effect]), [["3d", "visual"]]);
+  color.value = "#abcdef";
+  await color.fire("input");
+  assert.equal(f.settings.nodeGroups[0].color, "#abcdef");
+  await f.view.loadProfile({ name: "legacy", snapshot: { showNodeLabels: false } });
+  assert.equal(f.settings.hyperrelationEnclosures3D, true, "Profiles without enclosure fields leave saved spatial preferences intact");
+  assert.equal(f.settings.enclosureFillOpacity3D, 0.15);
+  f.tab.hide(); saved.tab.hide();
+});
+
 test("region-only profiles survive JSON reload and preserve paused graph data and group editor closures", async () => {
   const saved = fixture({ animate: false, hyperrelationRegions: true, regionFillOpacity: 0.14, nodeGroups: [{ query: "file:A", color: "#112233" }] });
   const profileEditor = new HostElement();

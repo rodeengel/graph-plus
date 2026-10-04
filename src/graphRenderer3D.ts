@@ -7,6 +7,7 @@ import { forceX, forceY } from "d3-force";
 // @ts-expect-error — d3-force-3d does not ship TypeScript declarations.
 import { forceZ } from "d3-force-3d";
 import type { SpatialLink3D, SpatialLinkAppearance } from "./spatialLink3D";
+import type { SpatialEnclosure3D } from "./spatialEnclosure3D";
 
 export class GraphRenderer3D {
   private container: HTMLElement;
@@ -31,6 +32,8 @@ export class GraphRenderer3D {
   private pendingCamera: { position: any; quaternion: any; up: any; target: any } | null = null;
   private SpatialLink: typeof SpatialLink3D | null = null;
   private spatialLinks = new Map<any, SpatialLink3D>();
+  private SpatialEnclosure: typeof SpatialEnclosure3D | null = null;
+  private spatialEnclosures = new Map<string, SpatialEnclosure3D>();
 
   private onMiddlePointerDown = (event: PointerEvent): void => this.startMiddleClick(event);
   private onMiddlePointerMove = (event: PointerEvent): void => this.moveMiddleClick(event);
@@ -119,6 +122,63 @@ export class GraphRenderer3D {
       spatial.group.clear();
     }
     this.spatialLinks?.clear();
+  }
+
+  /** Passive scene shells use only directly authored, displayed participants. */
+  private syncEnclosures(): void {
+    if (!this.graph || !this.SpatialEnclosure || !this.spatialEnclosures
+      || typeof this.graph.scene !== "function") return;
+    if (!this.settings.hyperrelationEnclosures3D || !this.settings.hypergraph3D) {
+      this.disposeSpatialEnclosures();
+      return;
+    }
+    const nodes: any[] = this.graph.graphData().nodes;
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    const visibleJunctions = new Set(nodes.flatMap((node) => node.relation ? [node.relation.id] : []));
+    const retained = new Set<string>();
+    for (const relation of this.relations) {
+      if (!visibleJunctions.has(relation.id) || this.settings.linkTypes[relation.type]?.visible === false) continue;
+      // Referenced relation notes resolve to their one junction. Geometry and
+      // proximity never expand or flatten these authored participant IDs.
+      const ids = this.getDisplayedMemberIds(relation);
+      if (!ids.length) continue;
+      const members = ids.map((id) => {
+        const node = byId.get(id);
+        return {
+          id, x: node.x, y: node.y, z: node.z,
+          radius: Math.cbrt(this.getNodeVal(node)) * this.settings.nodeRelSize3D * (node.relation ? 1.25 : 1),
+        };
+      });
+      const selected = relation.id === this.selectedRelationId;
+      let enclosure = this.spatialEnclosures.get(relation.id);
+      if (!enclosure) {
+        enclosure = new this.SpatialEnclosure(this.getRelationColor(relation), this.settings.enclosureFillOpacity3D, selected);
+        this.spatialEnclosures.set(relation.id, enclosure);
+        this.graph.scene().add(enclosure.group);
+      }
+      enclosure.updateMembers(members, relation.members.length);
+      enclosure.updateAppearance(this.getRelationColor(relation), this.settings.enclosureFillOpacity3D, selected);
+      Object.assign(enclosure.group.userData, {
+        relationId: relation.id, type: relation.type, sourcePath: relation.sourcePath,
+        displayedMemberIds: [...ids], displayedMemberCount: ids.length,
+        totalMemberCount: relation.members.length, partial: ids.length < relation.members.length,
+      });
+      retained.add(relation.id);
+    }
+    for (const [id, enclosure] of this.spatialEnclosures) {
+      if (retained.has(id)) continue;
+      enclosure.group.parent?.remove(enclosure.group);
+      enclosure.dispose();
+      this.spatialEnclosures.delete(id);
+    }
+  }
+
+  private disposeSpatialEnclosures(): void {
+    for (const enclosure of this.spatialEnclosures?.values() ?? []) {
+      enclosure.group.parent?.remove(enclosure.group);
+      enclosure.dispose();
+    }
+    this.spatialEnclosures?.clear();
   }
 
   private nodeThreeObjectFn = (node: any): any => {
@@ -215,14 +275,16 @@ export class GraphRenderer3D {
 
   private async initGraph(): Promise<void> {
     try {
-      const [ForceGraph3DModule, threeModule, spatialModule] = await Promise.all([
+      const [ForceGraph3DModule, threeModule, spatialModule, enclosureModule] = await Promise.all([
         import("3d-force-graph"),
         import("three"),
         import("./spatialLink3D"),
+        import("./spatialEnclosure3D"),
       ]);
       const ForceGraph3D = ForceGraph3DModule.default;
       this.THREE = threeModule;
       this.SpatialLink = spatialModule.SpatialLink3D;
+      this.SpatialEnclosure = enclosureModule.SpatialEnclosure3D;
       if (this.destroyed) return;
 
       const rect = this.wrapper.getBoundingClientRect();
@@ -274,6 +336,7 @@ export class GraphRenderer3D {
             this.layoutStopped = false;
             this.graph?.cooldownTicks(Infinity);
           }
+          this.syncEnclosures();
         })
         .onEngineTick(() => {
           this.restorePendingCamera();
@@ -281,6 +344,7 @@ export class GraphRenderer3D {
             this.syncSelectionHighlights();
             this.updateJunctionLabels();
           }
+          this.syncEnclosures();
         })
         .onEngineStop(() => {
           // The installed library resumes its engine after visual digests.
@@ -293,6 +357,7 @@ export class GraphRenderer3D {
             this.syncSelectionHighlights();
             this.updateJunctionLabels();
           }
+          this.syncEnclosures();
         });
 
       this.graph.cooldownTicks(this.settings.animate ? Infinity : 0).warmupTicks(0);
@@ -392,6 +457,7 @@ export class GraphRenderer3D {
       this.syncSelectionHighlights();
       this.updateJunctionLabels();
       if (visualMetadataChanged) this.updateSettings();
+      this.syncEnclosures();
       return;
     }
     const nextBySource = new Map(nodes.map((node) => [node.relation?.sourcePath ?? node.id, node]));
@@ -421,6 +487,7 @@ export class GraphRenderer3D {
     if (visualMetadataChanged) this.graph.nodeThreeObject((node: any) => this.nodeThreeObjectFn(node));
     this.disposeSpatialLinks();
     this.graph.graphData({ nodes, links });
+    this.syncEnclosures();
   }
 
   /** Update visual display settings without reheating physics */
@@ -432,6 +499,7 @@ export class GraphRenderer3D {
     for (const [link, spatial] of this.spatialLinks?.entries() ?? []) {
       spatial.updateAppearance(this.getLinkAppearance(link));
     }
+    this.syncEnclosures();
     this.graph
       .nodeColor((node: any) => node.groupColor || this.settings.nodeColor)
       .nodeOpacity(this.settings.nodeOpacity3D)
@@ -461,6 +529,7 @@ export class GraphRenderer3D {
     this.selectedRelationId = id;
     this.selectionDirty = true;
     this.syncSelectionHighlights();
+    this.syncEnclosures();
   }
 
   getDisplayedMemberIds(relation: ExplicitRelation): string[] {
@@ -763,6 +832,7 @@ export class GraphRenderer3D {
     this.middleClick = null;
     this.resizeObserver.disconnect();
     this.disposeSpatialLinks();
+    this.disposeSpatialEnclosures();
     if (this.graph) {
       if (typeof this.graph._destructor === "function") {
         this.graph._destructor();

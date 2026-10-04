@@ -193,6 +193,8 @@ export interface GraphLinkTypesSettings {
   hypergraph3D: boolean;
   hyperrelationRegions: boolean;
   regionFillOpacity: number;
+  hyperrelationEnclosures3D: boolean;
+  enclosureFillOpacity3D: number;
   showUntyped: boolean;
   defaultMode: "2d" | "3d";
   nodeSize: number;
@@ -228,6 +230,8 @@ export const DEFAULT_SETTINGS: GraphLinkTypesSettings = {
   hypergraph3D: true,
   hyperrelationRegions: false,
   regionFillOpacity: 0.08,
+  hyperrelationEnclosures3D: false,
+  enclosureFillOpacity3D: 0.06,
   showUntyped: true,
   defaultMode: "3d",
   nodeSize: 5,
@@ -299,6 +303,8 @@ export const SETTING_DEFS: SettingDef[] = [
 
   // 3D Display
   { key: "hypergraph3D", label: "Relationship junctions", desc: "Show explicit multi-member relations as labelled junctions in 3D; disable for the standard note graph", section: "display3d", type: "toggle", effect: "rebuild", renderers: "3d" },
+  { key: "hyperrelationEnclosures3D", label: "Relationship enclosures", desc: "Passive spatial shells around displayed direct authored members in 3D junction mode. A nonmember inside remains a nonmember; shells do not intercept clicks or panning.", section: "display3d", type: "toggle", effect: "visual", renderers: "3d" },
+  { key: "enclosureFillOpacity3D", label: "Enclosure fill opacity", desc: "Independent low-opacity fill for 3D relationship enclosures (0-0.3); zero hides the fill without changing membership or springs", section: "display3d", type: "slider", min: 0, max: 0.3, step: 0.01, effect: "visual", renderers: "3d" },
   { key: "nodeRelSize3D", label: "Node scale", desc: "Size of 3D node spheres (1–20)", section: "display3d", type: "slider", min: 1, max: 20, step: 1, effect: "visual", renderers: "3d" },
   { key: "nodeOpacity3D", label: "Node opacity", desc: "Opacity of 3D nodes (0–1)", section: "display3d", type: "slider", min: 0, max: 1, step: 0.05, effect: "visual", renderers: "3d" },
   { key: "linkOpacity", label: "Link opacity", desc: "Multiplies per-type opacity for 3D connections and arrows (0-1); zero hides both", section: "display3d", type: "slider", min: 0, max: 1, step: 0.05, effect: "visual", renderers: "3d" },

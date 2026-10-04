@@ -55,6 +55,7 @@ export class GraphLinkTypesView extends ItemView {
   private selectedRelationId: string | null = null;
   private sidebarSettingControls = new Map<SettingDef["key"], { input: HTMLInputElement; valueDisplay?: HTMLElement }>();
   private regionStatusEl: HTMLElement | null = null;
+  private enclosureStatusEl: HTMLElement | null = null;
   private relationshipStyleStatusEl: HTMLElement | null = null;
   private sidebarRelationshipSync = new Map<string, () => void>();
   private sidebarForceSync = new Map<string, () => void>();
@@ -90,6 +91,12 @@ export class GraphLinkTypesView extends ItemView {
     if (this.currentMode !== "2d") return { available: false, reason: "Relationship regions are unavailable in 3D. Switch this graph to 2D." };
     if (!this.settings.hypergraph2D) return { available: false, reason: "Relationship regions are unavailable in the standard graph. Enable Relationship junctions." };
     return { available: true, reason: this.settings.hyperrelationRegions ? "Relationship regions are enabled in this 2D junction view." : "Relationship regions are available in this 2D junction view and are currently off." };
+  }
+
+  getEnclosureAvailability(): { available: boolean; reason: string } {
+    if (this.currentMode !== "3d") return { available: false, reason: "Relationship enclosures are unavailable in 2D. Switch this graph to 3D." };
+    if (!this.settings.hypergraph3D) return { available: false, reason: "Relationship enclosures are unavailable in the standard 3D graph. Enable Relationship junctions." };
+    return { available: true, reason: this.settings.hyperrelationEnclosures3D ? "Relationship enclosures are enabled in this 3D junction view." : "Relationship enclosures are available in this 3D junction view and are currently off." };
   }
 
   async onOpen(): Promise<void> {
@@ -222,6 +229,7 @@ export class GraphLinkTypesView extends ItemView {
     this.linkCountEls.clear();
     this.sidebarSettingControls.clear();
     this.regionStatusEl = null;
+    this.enclosureStatusEl = null;
     panel.empty();
 
     // --- Sidebar buttons row ---
@@ -365,7 +373,7 @@ export class GraphLinkTypesView extends ItemView {
         this.renderer3D?.setSelectedRelation(null);
         this.refreshRelations();
       });
-      details.createDiv({ cls: "gps-group-help", text: "All authored members are listed, including members hidden by filters. Highlighting follows direct authored membership. Regions are available only in 2D in this slice and approximate displayed membership; enclosure does not imply membership." });
+      details.createDiv({ cls: "gps-group-help", text: "All authored members are listed, including members hidden by filters. Highlighting follows direct authored membership. Optional 2D regions and 3D enclosures approximate displayed members; a nonmember inside remains a nonmember. Passive shells do not intercept clicks or panning." });
     } else if (invalidSelection) {
       parent.createDiv({ cls: "gps-group-help", text: "The selected relation is no longer valid or present." });
     }
@@ -408,13 +416,19 @@ export class GraphLinkTypesView extends ItemView {
       this.regionStatusEl = parent.createDiv({ cls: "gps-group-help" });
       parent.createDiv({ cls: "gps-group-help", text: "Regions approximate displayed membership. A node inside a region is not necessarily a member; filters can hide the source junction and its region." });
     }
+    if (section === "display3d") {
+      this.enclosureStatusEl = parent.createDiv({ cls: "gps-group-help" });
+      parent.createDiv({ cls: "gps-group-help", text: "Enclosures surround displayed direct authored members in spatial coordinates. A nonmember inside remains a nonmember. Shells are passive and do not intercept clicks or panning; filters can hide a junction and its enclosure. These preferences are independent of 2D regions." });
+    }
   }
 
   /** Update existing inputs and availability without reopening or replacing menus. */
   private syncSidebarSettings(): void {
     const { available, reason } = this.getRegionAvailability();
     if (this.regionStatusEl) this.regionStatusEl.textContent = reason;
-    if (this.relationshipStyleStatusEl) this.relationshipStyleStatusEl.textContent = "Color, line patterns, width, opacity, arrows, distance and attraction apply in both views. In 3D, effective opacity is global Link opacity x type opacity; zero hides the connection and its arrows while retaining membership and springs. Unordered membership is always arrowless. Relationship regions remain available only in 2D.";
+    const enclosure = this.getEnclosureAvailability();
+    if (this.enclosureStatusEl) this.enclosureStatusEl.textContent = enclosure.reason;
+    if (this.relationshipStyleStatusEl) this.relationshipStyleStatusEl.textContent = "Color, line patterns, width, opacity, arrows, distance and attraction apply in both views. In 3D, effective opacity is global Link opacity x type opacity; zero hides the connection and its arrows while retaining membership and springs. Unordered membership is always arrowless. Optional 2D regions and 3D enclosures have independent preferences.";
     for (const def of SETTING_DEFS) {
       const control = this.sidebarSettingControls.get(def.key);
       if (!control) continue;
@@ -427,6 +441,8 @@ export class GraphLinkTypesView extends ItemView {
       }
       if (def.key === "hyperrelationRegions") control.input.disabled = !available;
       if (def.key === "regionFillOpacity") control.input.disabled = !available || !this.settings.hyperrelationRegions;
+      if (def.key === "hyperrelationEnclosures3D") control.input.disabled = !enclosure.available;
+      if (def.key === "enclosureFillOpacity3D") control.input.disabled = !enclosure.available || !this.settings.hyperrelationEnclosures3D;
     }
     for (const sync of this.sidebarRelationshipSync.values()) sync();
     for (const sync of this.sidebarForceSync.values()) sync();
@@ -964,7 +980,7 @@ export class GraphLinkTypesView extends ItemView {
       if (forcesChanged) this.updateRelationshipForces();
       await this.rebuildGraph(true);
     } else {
-      // Region-only restoration keeps the editor objects and simulation intact.
+      // Region/enclosure-only restoration keeps the editor objects and simulation intact.
       this.syncSidebarSettings();
       if (groupsChanged) {
         this.buildFilterPanel();
