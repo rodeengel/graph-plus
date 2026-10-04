@@ -1,31 +1,19 @@
-name: Build semantic test package
+name: Build Graph Plus Semantic
 
 on:
   push:
     branches:
       - feature/semantic-links
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   build:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: feature/semantic-links
-          fetch-depth: 0
-
-      - name: Reassemble semantic source
-        run: |
-          cat .semantic/chunk-* > semantic-src.b64
-          base64 --decode semantic-src.b64 > semantic-src-clean.tar.gz
-          tar -xzf semantic-src-clean.tar.gz
-          rm -f semantic-src.b64 semantic-src-clean.tar.gz semantic-src.tar.gz
-          rm -rf .semantic
 
       - uses: actions/setup-node@v4
         with:
@@ -44,14 +32,6 @@ jobs:
           test -s manifest.json
           test -s styles.css
           grep -q '"id": "graph-plus-semantic"' manifest.json
-
-      - name: Commit source and compiled plugin
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "feat: add semantic relationship styling and physics"
-          git push
 
       - name: Stage installable plugin
         run: |
