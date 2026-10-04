@@ -93,6 +93,8 @@ test("regions draw behind links and entity circles, using independent fill opaci
   const labels = renderer.ctx.events.filter(event => event.kind === "label").map(event => event.text);
   assert.ok(labels.includes("first [first]"));
   assert.ok(labels.includes("second [second]"));
+  assert.equal(labels.filter(label => label === "first [first]").length, 1, "Regions use their junction labels without repeating boundary labels");
+  assert.equal(labels.filter(label => label === "second [second]").length, 1);
   const lastRegion = Math.max(...fills.map(fill => renderer.ctx.events.indexOf(fill)));
   const pairStroke = renderer.ctx.events.findIndex(event => event.kind === "stroke" && event.color === "#ff0000");
   const entity = renderer.ctx.events.findIndex(event => event.kind === "fill" && event.path[0]?.[0] === "arc");
@@ -122,6 +124,8 @@ test("selected regions outline only direct members, including one nested junctio
   assert.ok(!outlines.some(event => event.path[0][0] === "arc" && [b.x, c.x, unrelated.x].includes(event.path[0][1])));
   const highlightedBorders = renderer.ctx.events.filter(event => event.kind === "stroke" && event.alpha === 0.9);
   assert.equal(highlightedBorders.length, 1);
+  assert.equal(renderer.ctx.events.filter(event => event.kind === "label" && event.text === "parent [parent]").length, 1,
+    "Selected regions retain one primary junction identity label without duplicate boundary text");
 });
 
 test("partial 0/1/2 member regions retain authored totals and expose partial labels", () => {

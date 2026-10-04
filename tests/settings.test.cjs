@@ -582,3 +582,27 @@ test("relation selection reports filtered member counts including zero and keeps
   assert.deepEqual(f.opened, []);
   f.tab.hide();
 });
+
+test("invalid relation metadata clears inspector and renderer selection until explicitly selected again", async () => {
+  const f = relationFixture();
+  const panel = realSidebar(f);
+  await f.view.rebuildGraph();
+  f.view.selectRelation(f.view.fullData.semantic.relations[0]);
+  f.caches["Triad.md"].frontmatter.ordered = true;
+  await f.view.rebuildGraph();
+  assert.equal(f.view.selectedRelationId, null);
+  assert.deepEqual(f.selections, ["triad", null]);
+  assert.equal(section(panel, "Relations").content.find(element => element.cls === "gps-relation-details"), undefined);
+  f.view.refreshRelations();
+  assert.deepEqual(f.selections, ["triad", null], "An invalid selection is cleared only once");
+  f.caches["Triad.md"].frontmatter.ordered = false;
+  await f.view.rebuildGraph();
+  assert.equal(f.view.fullData.semantic.relations.length, 1);
+  assert.equal(f.view.selectedRelationId, null);
+  assert.equal(section(panel, "Relations").content.find(element => element.cls === "gps-relation-details"), undefined);
+  assert.deepEqual(f.selections, ["triad", null], "Validity recovery does not silently select the relation");
+  f.view.selectRelation(f.view.fullData.semantic.relations[0]);
+  assert.deepEqual(f.selections, ["triad", null, "triad"]);
+  assert.ok(section(panel, "Relations").content.find(element => element.cls === "gps-relation-details"));
+  f.tab.hide();
+});

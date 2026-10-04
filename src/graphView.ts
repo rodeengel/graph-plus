@@ -316,6 +316,11 @@ export class GraphLinkTypesView extends ItemView {
     const relations = model?.relations ?? [];
     const diagnostics = model?.diagnostics ?? [];
     const selected = relations.find((relation) => relation.id === this.selectedRelationId);
+    const invalidSelection = !!this.selectedRelationId && !selected;
+    if (invalidSelection) {
+      this.selectedRelationId = null;
+      this.renderer2D?.setSelectedRelation(null);
+    }
     const count = selected && this.renderer2D ? this.renderer2D.getRelationDisplayCount(selected.id) : null;
     const signature = JSON.stringify([relations, diagnostics, this.selectedRelationId, count, this.currentMode, this.settings.hypergraph2D]);
     if (signature === this.relationsSignature) return;
@@ -351,8 +356,7 @@ export class GraphLinkTypesView extends ItemView {
         this.refreshRelations();
       });
       details.createDiv({ cls: "gps-group-help", text: "All authored members are listed. Regions approximate the displayed members; a node inside a region is not necessarily a member. Filters can hide members or the source junction and its region." });
-    } else if (this.selectedRelationId) {
-      this.renderer2D?.setSelectedRelation(null);
+    } else if (invalidSelection) {
       parent.createDiv({ cls: "gps-group-help", text: "The selected relation is no longer valid or present." });
     }
     for (const diagnostic of diagnostics) {

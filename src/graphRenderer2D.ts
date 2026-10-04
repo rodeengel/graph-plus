@@ -304,7 +304,7 @@ export class GraphRenderer2D {
     const scale = this.transform.k;
     const opacity = Number.isFinite(this.settings.regionFillOpacity)
       ? Math.max(0, Math.min(0.3, this.settings.regionFillOpacity)) : 0.08;
-    for (const { relation, members, geometry } of regions) {
+    for (const { relation, geometry } of regions) {
       const selected = relation.id === this.selectedRelationId;
       const color = this.settings.linkTypes[relation.type]?.color ?? "#888";
       ctx.save();
@@ -322,18 +322,8 @@ export class GraphRenderer2D {
       ctx.globalAlpha = selected ? 0.9 : 0.4;
       ctx.lineWidth = (selected ? 2.4 : 1.2) / scale;
       ctx.stroke();
-      ctx.globalAlpha = 1;
-      ctx.font = `${selected ? "600 " : ""}${12 / scale}px sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "bottom";
-      ctx.lineWidth = 3 / scale;
-      ctx.strokeStyle = this.resolvedBgColor;
-      const partial = members.length < relation.members.length;
-      const label = `${relation.sourceName} [${relation.id}]${partial ? ` · ${members.length}/${relation.members.length} shown (partial)` : ""}`;
-      const labelY = geometry.bounds.minY - 4 / scale;
-      ctx.strokeText(label, geometry.center.x, labelY);
-      ctx.fillStyle = this.resolvedTextColor;
-      ctx.fillText(label, geometry.center.x, labelY);
+      // Identity and partial counts stay on the always-labelled junction.
+      // Boundary text would compete with shared members and other junctions.
       ctx.restore();
     }
   }
@@ -745,7 +735,8 @@ export class GraphRenderer2D {
         let label = node.relation ? `${node.relation.sourceName} [${node.relation.id}]` : node.name;
         if (node.relation && regionPresentation) {
           const relation = relationById.get(node.relation.id) ?? node.relation;
-          if (this.getDisplayedMembers(relation, memberIndex).length === 0) label += ` · 0/${relation.members.length} shown (partial)`;
+          const displayed = this.getDisplayedMembers(relation, memberIndex).length;
+          if (displayed < relation.members.length) label += ` · ${displayed}/${relation.members.length} shown (partial)`;
         }
         ctx.strokeText(label, node.x, node.y - radius - 4);
         ctx.fillStyle = this.resolvedTextColor;
