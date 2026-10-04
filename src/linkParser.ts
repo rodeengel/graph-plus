@@ -10,10 +10,15 @@ import {
   UNTYPED_LINK_KEY,
   createLinkTypeConfig,
   normalizeLinkTypeConfig,
+  ExplicitRelation,
+  RelationDiagnostic,
 } from "./types";
+import { createSemanticGraph } from "./semanticGraph";
 
 // Matches [[wikilink]] or [[wikilink|alias]]
 const WIKILINK_RE = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
+const MEMBER_WIKILINK_RE = /^\[\[([^\]|]+)(?:\|[^\]]+)?\]\]$/;
+const RELATION_METADATA_KEYS = new Set(["graph_kind", "graph_id", "relation_type", "ordered", "members"]);
 
 // Matches key:: rest-of-line (handles bare, bracket-wrapped, and paren-wrapped inline fields)
 // The value capture extends to end of line; wikilinks are extracted from it separately.
@@ -95,11 +100,91 @@ export async function buildGraphData(
     })
   );
 
+  const diagnostics: RelationDiagnostic[] = [];
+  const relations: ExplicitRelation[] = [];
+  const relationBySource = new Map<string, ExplicitRelation>();
+  const claims = new Map<string, string[]>();
+  for (const { file } of fileContents) {
+    const fm = app.metadataCache.getFileCache(file)?.frontmatter;
+    if (fm?.graph_kind !== "relation" || typeof fm.graph_id !== "string" || !fm.graph_id.trim()) continue;
+    const id = fm.graph_id.trim();
+    const sources = claims.get(id) ?? [];
+    sources.push(file.path);
+    claims.set(id, sources);
+  }
+  for (const { file } of fileContents) {
+    const fm = app.metadataCache.getFileCache(file)?.frontmatter;
+    if (fm?.graph_kind !== "relation") continue;
+    const id = typeof fm.graph_id === "string" ? fm.graph_id.trim() : "";
+    const report = (code: string, message: string, severity: "error" | "warning" = "error") => {
+      diagnostics.push({ code, message, severity, sourcePath: file.path, ...(id ? { relationId: id } : {}) });
+    };
+    let invalid = false;
+    if (!id) { report("invalid_id", "graph_id must be a non-empty authored string."); invalid = true; }
+    if (id && (claims.get(id)?.length ?? 0) > 1) {
+      report("duplicate_id", `graph_id '${id}' is claimed by multiple notes: ${claims.get(id)!.join(", ")}. All claims use the standard note graph.`);
+      invalid = true;
+    }
+    const type = typeof fm.relation_type === "string" ? fm.relation_type.trim() : "";
+    if (!type) { report("invalid_type", "relation_type must be a non-empty string."); invalid = true; }
+    if (fm.ordered !== undefined && fm.ordered !== false) {
+      report("unsupported_ordering", "Only unordered membership (ordered: false) is supported; this note remains in the standard graph.");
+      invalid = true;
+    }
+    if (fm.roles !== undefined || fm.member_roles !== undefined || fm.relation_roles !== undefined) {
+      report("unsupported_roles", "Role-labelled membership is not supported; this note remains in the standard graph.");
+      invalid = true;
+    }
+    const members: string[] = [];
+    if (!Array.isArray(fm.members)) {
+      report("invalid_members", "members must be a list of standalone explicit [[note]] wikilinks.");
+      invalid = true;
+    } else {
+      for (const member of fm.members) {
+        const match = typeof member === "string" ? member.trim().match(MEMBER_WIKILINK_RE) : null;
+        const target = match?.[1].trim();
+        if (!target || target.includes("#")) {
+          report("invalid_member", "Each member must be a standalone whole-note [[wikilink]], optionally with an alias; plain values, roles, headings, and blocks are unsupported.");
+          invalid = true;
+          continue;
+        }
+        const dest = app.metadataCache.getFirstLinkpathDest(target, file.path);
+        const extension = target.split(".").pop()?.toLowerCase() ?? "";
+        if ((dest && !dest.path.toLowerCase().endsWith(".md")) || (!dest && ATTACHMENT_EXTENSIONS.has(extension))) {
+          report("invalid_member", `Member '${target}' is an attachment, not a note.`);
+          invalid = true;
+          continue;
+        }
+        const memberPath = resolveWikilink(target, file);
+        if (memberPath === file.path) {
+          report("invalid_member", "A relationship note cannot be its own participant.");
+          invalid = true;
+          continue;
+        }
+        if (members.includes(memberPath)) {
+          report("duplicate_member", `Member '${target}' resolves to the already listed note '${memberPath}'.`);
+          invalid = true;
+          continue;
+        }
+        if (!dest) report("unresolved_member", `Member '${target}' does not resolve to an existing note. Its unresolved entity is retained.`, "warning");
+        members.push(memberPath);
+      }
+      if (members.length < 2) { report("too_few_members", "A relation needs at least two distinct note members."); invalid = true; }
+    }
+    if (!invalid) {
+      const relation: ExplicitRelation = { id, type, ordered: false, members, sourcePath: file.path, sourceName: file.basename };
+      relations.push(relation);
+      relationBySource.set(file.path, relation);
+      ensureLinkType(settings, type);
+    }
+  }
+
   for (const { file, content } of fileContents) {
     const node = ensureNode(file.path, file.basename, true);
 
     const cache = app.metadataCache.getFileCache(file);
-    const typedTargets = new Set<string>(); // paths found via typed links
+    const relation = relationBySource.get(file.path);
+    const typedTargets = new Set<string>(relation?.members ?? []); // also suppress duplicated body member links
 
     // --- Collect tags & properties from frontmatter ---
     if (cache?.frontmatter) {
@@ -132,6 +217,7 @@ export async function buildGraphData(
 
       for (const [key, value] of Object.entries(fm)) {
         if (skipKeys.has(key)) continue;
+        if (relation && RELATION_METADATA_KEYS.has(key)) continue;
         const values = Array.isArray(value) ? value : [value];
         for (const v of values) {
           const strVal = String(v);
@@ -187,6 +273,16 @@ export async function buildGraphData(
     }
   }
 
+  // Incidence preserves each relation's identity and never creates member-to-member facts.
+  for (const relation of relations) {
+    for (const member of relation.members) {
+      links.push({
+        source: relation.sourcePath, target: member, type: relation.type, curvature: 0,
+        kind: "membership", relationId: relation.id, memberCount: relation.members.length,
+      });
+    }
+  }
+
   const nodes = Array.from(nodeMap.values());
 
   // Apply node groups
@@ -198,7 +294,7 @@ export async function buildGraphData(
   // Clean up stale link types (types that no longer exist in the data)
   cleanStaleLinkTypes(settings, links);
 
-  return { nodes, links };
+  return { nodes, links, semantic: createSemanticGraph(nodes, links, relations, diagnostics) };
 }
 
 function stripFrontmatter(content: string): string {
@@ -275,7 +371,7 @@ export function matchesQuery(node: GraphNode, query: string): boolean {
   // path: prefix
   if (q.startsWith("path:")) {
     const prefix = q.slice(5).trim();
-    return node.id.toLowerCase().startsWith(prefix.toLowerCase());
+    return (node.relation?.sourcePath ?? node.id).toLowerCase().startsWith(prefix.toLowerCase());
   }
 
   // file: pattern
@@ -307,7 +403,7 @@ export function matchesQuery(node: GraphNode, query: string): boolean {
 
   // Bare text: match node name or path (case-insensitive substring)
   const lower = q.toLowerCase();
-  return node.name.toLowerCase().includes(lower) || node.id.toLowerCase().includes(lower);
+  return node.name.toLowerCase().includes(lower) || (node.relation?.sourcePath ?? node.id).toLowerCase().includes(lower);
 }
 
 /**
@@ -385,13 +481,17 @@ export function filterGraphData(
     const sourceId = typeof link.source === "string" ? link.source : link.source.id;
     const targetId = typeof link.target === "string" ? link.target : link.target.id;
     return allowedNodes.has(sourceId) && allowedNodes.has(targetId);
-  });
+  }).map((link) => ({
+    ...link,
+    source: typeof link.source === "string" ? link.source : link.source.id,
+    target: typeof link.target === "string" ? link.target : link.target.id,
+  }));
 
   // Count links per node for sizing
   const linkCounts = new Map<string, number>();
   for (const link of visibleLinks) {
-    const sourceId = typeof link.source === "string" ? link.source : link.source.id;
-    const targetId = typeof link.target === "string" ? link.target : link.target.id;
+    const sourceId = link.source;
+    const targetId = link.target;
     linkCounts.set(sourceId, (linkCounts.get(sourceId) ?? 0) + 1);
     linkCounts.set(targetId, (linkCounts.get(targetId) ?? 0) + 1);
   }
@@ -403,7 +503,10 @@ export function filterGraphData(
     if (!allowedNodes.has(n.id)) return false;
     if (settings.showOrphans) return true;
     return connectedNodes.has(n.id);
-  });
+  }).map((node) => ({
+    ...node, tags: [...node.tags],
+    properties: Object.fromEntries(Object.entries(node.properties).map(([key, values]) => [key, [...values]])),
+  }));
 
   // Set link counts on nodes
   for (const node of filteredNodes) {
@@ -416,6 +519,7 @@ export function filterGraphData(
   return {
     nodes: filteredNodes,
     links: visibleLinks,
+    ...(data.semantic ? { semantic: data.semantic } : {}),
   };
 }
 
@@ -424,7 +528,12 @@ export function filterGraphData(
  */
 export function countLinkTypes(data: GraphData): Map<string, number> {
   const counts = new Map<string, number>();
+  const seenRelations = new Set<string>();
   for (const link of data.links) {
+    if (link.kind === "membership" && link.relationId) {
+      if (seenRelations.has(link.relationId)) continue;
+      seenRelations.add(link.relationId);
+    }
     counts.set(link.type, (counts.get(link.type) ?? 0) + 1);
   }
   return counts;

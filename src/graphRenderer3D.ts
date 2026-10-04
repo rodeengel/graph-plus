@@ -1,7 +1,7 @@
 import type { App } from "obsidian";
 import type { ForceGraph3DInstance } from "3d-force-graph";
 import type { GraphNode, GraphLink, GraphData, GraphLinkTypesSettings } from "./types";
-import { UNTYPED_LINK_KEY, parseForceRules, getEffectiveLinkStrength, type ForceRule } from "./types";
+import { UNTYPED_LINK_KEY, parseForceRules, getEffectiveLinkStrength, getMembershipLinkStrength, type ForceRule } from "./types";
 import { applyNodeGroups } from "./linkParser";
 import { forceX, forceY } from "d3-force";
 // @ts-expect-error — d3-force-3d does not ship TypeScript declarations.
@@ -54,6 +54,7 @@ export class GraphRenderer3D {
   }
 
   private shouldShowArrow(link: any): boolean {
+    if (link.kind === "membership") return false;
     const mode = this.settings.linkTypes[link.type]?.arrowMode ?? "inherit";
     if (mode === "on") return true;
     if (mode === "off") return false;
@@ -185,6 +186,9 @@ export class GraphRenderer3D {
       target: typeof l.target === "string" ? l.target : l.target.id,
       type: l.type,
       curvature: l.curvature,
+      kind: l.kind,
+      relationId: l.relationId,
+      memberCount: l.memberCount,
     }));
 
     this.graph.graphData({ nodes, links });
@@ -278,6 +282,7 @@ export class GraphRenderer3D {
 
   private getLinkStrength(link: any): number {
     const attraction = this.settings.linkTypes[link.type]?.attraction ?? 1;
+    if (link.kind === "membership") return getMembershipLinkStrength(this.settings.linkStrength, attraction, link.memberCount);
     return getEffectiveLinkStrength(this.settings.linkStrength, attraction);
   }
 
@@ -289,6 +294,7 @@ export class GraphRenderer3D {
       const links = linkForce.links();
 
       for (const link of links) {
+        if (link.kind === "membership") continue;
         const source = link.source;
         const target = link.target;
         if (!source || !target) continue;

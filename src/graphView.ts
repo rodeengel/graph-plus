@@ -8,9 +8,11 @@ import type {
   LinkTypeConfig,
   LinkLineStyle,
   LinkArrowMode,
+  ExplicitRelation,
 } from "./types";
 import { UNTYPED_LINK_KEY, SETTING_DEFS } from "./types";
 import { buildGraphData, filterGraphData, countLinkTypes, applyNodeGroups } from "./linkParser";
+import { projectGraphData } from "./semanticGraph";
 import { GraphRenderer2D } from "./graphRenderer2D";
 import { GraphRenderer3D } from "./graphRenderer3D";
 
@@ -35,6 +37,10 @@ export class GraphLinkTypesView extends ItemView {
   private sidebarRebuildPending = false;
   private linkTypesContent: HTMLElement | null = null;
   private linkForcesContent: HTMLElement | null = null;
+  private relationsContent: HTMLElement | null = null;
+  private relationsChevron: HTMLElement | null = null;
+  private relationsSignature = "";
+  private selectedRelationId: string | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -119,6 +125,7 @@ export class GraphLinkTypesView extends ItemView {
     }
 
     this.pushDataToRenderer();
+    this.refreshRelations();
   }
 
   // --- Collapsible section helper ---
@@ -132,6 +139,7 @@ export class GraphLinkTypesView extends ItemView {
 
     const header = section.createDiv({ cls: "gps-collapsible-header" });
     const chevron = header.createSpan({ cls: "gps-chevron", text: open ? "▾" : "▸" });
+    if (title === "Relations") this.relationsChevron = chevron;
     header.createSpan({ text: " " + title });
 
     const content = section.createDiv({ cls: "gps-collapsible-content" });
@@ -231,6 +239,10 @@ export class GraphLinkTypesView extends ItemView {
     // --- Relationship Types (manual — dynamic from data) ---
     this.buildLinkTypesSection(panel);
 
+    this.relationsContent = this.createCollapsibleSection(panel, "Relations", false);
+    this.relationsSignature = "";
+    this.refreshRelations();
+
     const displayContent = this.createCollapsibleSection(panel, "Display", false);
     this.renderSettingsSection(displayContent, "display");
 
@@ -254,6 +266,64 @@ export class GraphLinkTypesView extends ItemView {
     const profilesContent = this.createCollapsibleSection(panel, "Profiles", false);
     this.buildProfileEditor(profilesContent);
     panel.scrollTop = scrollTop;
+  }
+
+  /** Inspection uses the authored record, including members hidden by filters. */
+  private selectRelation(relation: ExplicitRelation): void {
+    this.selectedRelationId = relation.id;
+    this.sidebarVisible = true;
+    if (this.filterPanelEl) this.filterPanelEl.style.display = "";
+    this.sectionOpen.set("Relations", true);
+    if (this.relationsContent) this.relationsContent.style.display = "";
+    if (this.relationsChevron) this.relationsChevron.textContent = "▾";
+    this.relationsSignature = "";
+    this.refreshRelations();
+    this.relationsContent?.scrollIntoView?.({ block: "nearest" });
+  }
+
+  private refreshRelations(): void {
+    const parent = this.relationsContent;
+    if (!parent) return;
+    const model = this.fullData.semantic;
+    const relations = model?.relations ?? [];
+    const diagnostics = model?.diagnostics ?? [];
+    const signature = JSON.stringify([relations, diagnostics, this.selectedRelationId]);
+    if (signature === this.relationsSignature) return;
+    this.relationsSignature = signature;
+    const scrollTop = this.filterPanelEl?.scrollTop;
+    parent.empty();
+
+    parent.createDiv({ cls: "gps-group-help", text: `${relations.length} explicit relations · ${diagnostics.length} diagnostics` });
+    for (const relation of relations) {
+      const button = parent.createEl("button", {
+        cls: "gps-relation-select",
+        text: `${relation.sourceName} · ${relation.id}`,
+        attr: { "aria-pressed": String(this.selectedRelationId === relation.id) },
+      });
+      button.addEventListener("click", () => this.selectRelation(relation));
+    }
+    const selected = relations.find((relation) => relation.id === this.selectedRelationId);
+    if (selected) {
+      const details = parent.createDiv({ cls: "gps-relation-details" });
+      details.createEl("div", { text: `ID: ${selected.id}` });
+      details.createEl("div", { text: `Type: ${selected.type}` });
+      details.createEl("div", { text: `Unordered membership (${selected.members.length})` });
+      const members = details.createEl("ul");
+      for (const member of selected.members) members.createEl("li", { text: member });
+      details.createEl("div", { text: `Source: ${selected.sourcePath}` });
+      const open = details.createEl("button", { text: "Open source note" });
+      open.addEventListener("click", () => this.app.workspace.openLinkText(selected.sourcePath, "", "tab"));
+      details.createDiv({ cls: "gps-group-help", text: "All authored members are listed; filters may hide connections in the graph." });
+    } else if (this.selectedRelationId) {
+      parent.createDiv({ cls: "gps-group-help", text: "The selected relation is no longer valid or present." });
+    }
+    for (const diagnostic of diagnostics) {
+      const row = parent.createDiv({ cls: "gps-relation-diagnostic" });
+      row.createEl("div", { text: `${diagnostic.code}: ${diagnostic.message}` });
+      const source = row.createEl("button", { text: diagnostic.sourcePath });
+      source.addEventListener("click", () => this.app.workspace.openLinkText(diagnostic.sourcePath, "", "tab"));
+    }
+    if (this.filterPanelEl && scrollTop !== undefined) this.filterPanelEl.scrollTop = scrollTop;
   }
 
   /** Render all settings for a section from the declarative schema */
@@ -283,7 +353,7 @@ export class GraphLinkTypesView extends ItemView {
     const r = def.renderers ?? "both";
     switch (def.effect) {
       case "rebuild":
-        this.pushDataToRenderer();
+        this.pushDataToRenderer(r);
         break;
       case "visual":
         if ((r === "both" || r === "2d") && this.renderer2D) this.renderer2D.updateSettings();
@@ -776,7 +846,8 @@ export class GraphLinkTypesView extends ItemView {
       this.renderer2D = new GraphRenderer2D(
         this.canvasContainerEl,
         this.app,
-        this.settings
+        this.settings,
+        (relation) => this.selectRelation(relation)
       );
     } else {
       this.renderer3D = new GraphRenderer3D(
@@ -787,13 +858,14 @@ export class GraphLinkTypesView extends ItemView {
     }
   }
 
-  private pushDataToRenderer(): void {
-    const filtered = filterGraphData(this.fullData, this.settings, this.settings.searchQuery);
-    if (this.renderer2D) {
-      this.renderer2D.updateData(filtered);
+  private pushDataToRenderer(renderers: SettingDef["renderers"] = "both"): void {
+    if ((renderers === "both" || renderers === "2d") && this.renderer2D) {
+      const projected = projectGraphData(this.fullData, this.settings.hypergraph2D);
+      this.renderer2D.updateData(filterGraphData(projected, this.settings, this.settings.searchQuery));
     }
-    if (this.renderer3D) {
-      this.renderer3D.updateData(filtered);
+    if ((renderers === "both" || renderers === "3d") && this.renderer3D) {
+      const standard = projectGraphData(this.fullData, false);
+      this.renderer3D.updateData(filterGraphData(standard, this.settings, this.settings.searchQuery));
     }
   }
 

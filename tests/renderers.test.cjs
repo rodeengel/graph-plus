@@ -39,10 +39,12 @@ function settings(linkTypes = {}, overrides = {}) {
 
 function recordingContext() {
   const draws = [];
+  const labels = [];
   let currentPath = [];
   let dash = [];
   const ctx = {
     draws,
+    labels,
     lineCap: "butt",
     globalAlpha: 1,
     save() {}, restore() {}, clearRect() {}, translate() {}, scale() {},
@@ -55,7 +57,8 @@ function recordingContext() {
     setLineDash(value) { dash = [...value]; },
     stroke() { record("stroke"); },
     fill() { record("fill"); },
-    strokeText() {}, fillText() {},
+    strokeText() {},
+    fillText(text, x, y) { labels.push({ text, x, y, font: ctx.font, color: ctx.fillStyle }); },
   };
   function record(kind) {
     draws.push({
@@ -310,4 +313,181 @@ test("maximum attraction combinations stay bounded in real 2D and 3D d3 simulati
       }
     }
   }
+});
+
+const explicitRelation = (id = "r-1", members = ["a", "b", "c"]) => Object.freeze({
+  id, type: "alliance", ordered: false, members: Object.freeze(members),
+  sourcePath: `Relations/${id}.md`, sourceName: `Alliance ${id}`,
+});
+
+test("2D relationship junctions draw labelled diamonds and unordered membership never draws arrows", () => {
+  const relation = explicitRelation();
+  const junction = { ...node("\u0000relation:r-1", 100, 100), relation, groupColor: "#wrong-group" };
+  const a = node("a", 150, 100);
+  const renderer = fixture2D(settings({
+    alliance: createLinkTypeConfig("#12abcd", { arrowMode: "on", lineStyle: "dotted", widthMultiplier: 2, opacity: 0.4 }),
+  }, { showNodeLabels: false, showArrows: true, showLabels: true }), [
+    { source: junction, target: a, type: "alliance", curvature: 0, kind: "membership", relationId: relation.id, memberCount: 3 },
+  ], [junction, a]);
+  renderer.transform.k = 0.4;
+  renderer.render();
+  const [incidence, diamondFill, diamondOutline, entityFill] = renderer.ctx.draws;
+  assert.equal(incidence.kind, "stroke");
+  assert.equal(incidence.color, "#12abcd");
+  assert.equal(incidence.lineWidth, 3);
+  assert.equal(incidence.alpha, 0.4);
+  assert.deepEqual(incidence.dash, [0, 7.5]);
+  assert.deepEqual(diamondFill.path.map(command => command[0]),
+    ["moveTo", "lineTo", "lineTo", "lineTo", "closePath"]);
+  assert.equal(diamondOutline.color, "#12abcd", "Junction type color takes priority over entity groups");
+  assert.equal(entityFill.path[0][0], "arc", "Ordinary entities retain their circles");
+  assert.equal(renderer.ctx.draws.filter(draw => draw.kind === "fill").length, 2, "No membership arrowhead was drawn");
+  assert.deepEqual(renderer.ctx.labels.map(label => label.text), ["Alliance r-1 [r-1]"]);
+  assert.equal(renderer.shouldShowArrow({ type: "alliance" }), true, "Ordinary links retain arrow overrides");
+});
+
+test("2D junction selection exposes the complete authored relation and opens its source without a callback", () => {
+  const relation = explicitRelation();
+  const junction = { ...node("\u0000relation:r-1", 100, 100), relation };
+  const renderer = fixture2D(settings(), [], [junction]);
+  let selected;
+  const opened = [];
+  renderer.app = { workspace: { openLinkText: (...args) => opened.push(args) } };
+  renderer.onSelectRelation = record => { selected = record; };
+  renderer.selectNode(junction);
+  assert.strictEqual(selected, relation);
+  assert.deepEqual(selected.members, ["a", "b", "c"]);
+  assert.equal(opened.length, 0);
+  renderer.selectNode(node("a", 150, 100));
+  assert.deepEqual(opened.pop(), ["a", "", false]);
+  renderer.onSelectRelation = undefined;
+  renderer.selectNode(junction);
+  assert.deepEqual(opened.pop(), ["Relations/r-1.md", "", false]);
+});
+
+test("2D membership springs normalize a bounded relation budget and ignore directional force rules", () => {
+  const renderer = fixture2D(settings({
+    alliance: createLinkTypeConfig("#12abcd", { attraction: 3, distanceMultiplier: 2 }),
+  }, { linkStrength: 2, linkDistance: 60 }), [], []);
+  renderer.forceRuleCache.set("alliance", [{ type: "distance", value: 1.5 }, { type: "direction", dir: "down", value: 1 }]);
+  for (const size of [2, 3, 10, 50]) {
+    const link = { type: "alliance", kind: "membership", memberCount: size };
+    assert.equal(renderer.getLinkStrength(link), 2 / size);
+    assert.equal(renderer.getLinkStrength(link) * size, 2);
+    assert.equal(renderer.getLinkDistance(link), 180, "Distance is participant-to-junction distance");
+  }
+  const junction = { ...node("junction", 0, 0), vx: 0, vy: 0 };
+  const participant = { ...node("a", 10, 10), vx: 0, vy: 0 };
+  renderer.links = [{ source: junction, target: participant, type: "alliance", kind: "membership", memberCount: 3, curvature: 0 }];
+  const applyDirection = renderer.createLinkTypeForce();
+  applyDirection(0.2);
+  assert.equal(participant.vy, 0, "Unordered membership has no invented down direction");
+  delete renderer.links[0].kind;
+  applyDirection(0.2);
+  assert.equal(participant.vy, 10, "Ordinary directed link rules are preserved");
+});
+
+test("2D metadata refreshes and paused topology changes preserve positions, pins, camera and semantic source objects", () => {
+  const a = { ...node("a", 10, 20), vx: 0.2, vy: -0.1, fx: 10, fy: 20 };
+  const b = { ...node("b", 100, 40), vx: -0.2, vy: 0.1 };
+  const renderer = fixture2D(settings({ alliance: createLinkTypeConfig("#12abcd") }, { animate: false }), [], [a, b]);
+  renderer.simulation = forceSimulation(renderer.nodes).alpha(0.07).stop();
+  renderer.transform = { x: 213, y: -51, k: 2.25 };
+  let restarts = 0;
+  const restart = renderer.simulation.restart.bind(renderer.simulation);
+  renderer.simulation.restart = () => { restarts++; return restart(); };
+  const ordinaryData = {
+    nodes: [Object.freeze({ ...a, tags: Object.freeze([]), properties: Object.freeze({}) }), Object.freeze({ ...b })],
+    links: [Object.freeze({ source: "a", target: "b", type: "alliance", curvature: 0 })],
+  };
+  renderer.updateData(ordinaryData);
+  const originalCamera = renderer.transform;
+  const positions = renderer.nodes.map(({ x, y, vx, vy, fx, fy }) => ({ x, y, vx, vy, fx, fy }));
+  const originalNodes = renderer.nodes;
+  const originalLinks = renderer.links;
+  const originalRestarts = restarts;
+  renderer.simulation.alpha(0.07);
+  renderer.updateData({ ...ordinaryData, nodes: ordinaryData.nodes.map(n => ({ ...n, name: `Renamed ${n.id}` })) });
+  assert.strictEqual(renderer.nodes, originalNodes);
+  assert.strictEqual(renderer.links, originalLinks);
+  assert.equal(renderer.nodes[0].name, "Renamed a");
+  assert.equal(restarts, originalRestarts);
+  assert.equal(renderer.simulation.alpha(), 0.07);
+  assert.deepEqual(renderer.nodes.map(({ x, y, vx, vy, fx, fy }) => ({ x, y, vx, vy, fx, fy })), positions);
+
+  const relation = explicitRelation("new", ["a", "b"]);
+  const junction = Object.freeze({ ...node("\u0000relation:new", undefined, undefined), relation });
+  const projected = {
+    nodes: [...ordinaryData.nodes, junction],
+    links: [...ordinaryData.links, ...relation.members.map(target => Object.freeze({
+      source: junction.id, target, type: relation.type, curvature: 0, kind: "membership", relationId: relation.id, memberCount: relation.members.length,
+    }))],
+  };
+  renderer.updateData(projected);
+  assert.strictEqual(renderer.nodes[0], a);
+  assert.strictEqual(renderer.nodes[1], b);
+  assert.strictEqual(renderer.transform, originalCamera);
+  assert.deepEqual(renderer.nodes.slice(0, 2).map(({ x, y, vx, vy, fx, fy }) => ({ x, y, vx, vy, fx, fy })), positions);
+  assert.deepEqual([renderer.nodes[2].x, renderer.nodes[2].y], [55, 30], "New junction starts at member centroid");
+  assert.equal(junction.x, undefined, "Projection source is never mutated by the simulation");
+  assert.equal(projected.links[1].source, junction.id, "Source link endpoints remain semantic IDs");
+  assert.strictEqual(renderer.nodes[2].relation, relation);
+  renderer.simulation.stop();
+});
+
+test("3D standard graph retains relation notes and membership metadata without invented arrows or direction", () => {
+  // Exercise applyData and the actual installed d3-force-3d link objects; this
+  // deliberately does not instantiate WebGL or claim a native Obsidian check.
+  const renderer = Object.create(GraphRenderer3D.prototype);
+  renderer.settings = settings({
+    alliance: createLinkTypeConfig("#12abcd", {
+      attraction: 3, distanceMultiplier: 2, arrowMode: "on", forceRule: "down:1 distance:1.5x",
+    }),
+  }, { linkStrength: 2, linkDistance: 60, showArrows: true });
+  renderer.forceRuleCache = new Map();
+  const relation = explicitRelation();
+  const source = node(relation.sourcePath, 0, 0);
+  const members = relation.members.map((id, index) => node(id, (index + 1) * 30, 0));
+  const input = {
+    nodes: [source, ...members],
+    links: [
+      ...members.map(member => Object.freeze({
+        source, target: member, type: relation.type, curvature: 0,
+        kind: "membership", relationId: relation.id, memberCount: members.length,
+      })),
+      Object.freeze({ source: members[0], target: members[1], type: relation.type, curvature: 0 }),
+    ],
+  };
+  let data, simulation;
+  renderer.graph = {
+    graphData(value) { data = value; },
+    d3Force(name) { return simulation.force(name); },
+  };
+  renderer.applyData(input);
+  assert.deepEqual(data.nodes.map(n => n.id), ["Relations/r-1.md", "a", "b", "c"]);
+  assert.ok(data.nodes.every(n => !n.relation), "Standard 3D uses real note nodes without synthetic junctions");
+  assert.deepEqual(data.links.slice(0, 3).map(({ source, target, kind, relationId, memberCount }) =>
+    ({ source, target, kind, relationId, memberCount })), relation.members.map(target => ({
+    source: relation.sourcePath, target, kind: "membership", relationId: relation.id, memberCount: 3,
+  })));
+  for (const link of data.links.slice(0, 3)) {
+    assert.equal(renderer.getLinkStrength(link), 2 / 3);
+    assert.equal(renderer.getLinkDistance(link), 180);
+    assert.equal(renderer.shouldShowArrow(link), false);
+  }
+  assert.equal(renderer.getLinkStrength(data.links[3]), 2);
+  assert.equal(renderer.shouldShowArrow(data.links[3]), true);
+
+  simulation = forceSimulation3D(data.nodes, 3)
+    .force("link", forceLink3D(data.links).id(n => n.id)
+      .strength(l => renderer.getLinkStrength(l)).distance(l => renderer.getLinkDistance(l)))
+    .stop();
+  renderer.createLinkTypeForce()(0.2);
+  const byId = new Map(data.nodes.map(n => [n.id, n]));
+  assert.equal(byId.get("a").vy, 0);
+  assert.equal(byId.get("c").vy, 0);
+  assert.equal(byId.get("b").vy, -10, "Only the ordinary a-to-b rule applies the 3D down force");
+  assert.strictEqual(input.links[0].source, source, "Rendering does not mutate source membership endpoints");
+  assert.strictEqual(input.links[0].target, members[0]);
+  simulation.stop();
 });

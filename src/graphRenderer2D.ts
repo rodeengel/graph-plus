@@ -19,8 +19,9 @@ import type {
   GraphLinkTypesSettings,
   LinkTypeConfig,
   LinkLineStyle,
+  ExplicitRelation,
 } from "./types";
-import { UNTYPED_LINK_KEY, parseForceRules, getEffectiveLinkStrength, type ForceRule } from "./types";
+import { UNTYPED_LINK_KEY, parseForceRules, getEffectiveLinkStrength, getMembershipLinkStrength, type ForceRule } from "./types";
 import { applyNodeGroups } from "./linkParser";
 
 export class GraphRenderer2D {
@@ -32,6 +33,8 @@ export class GraphRenderer2D {
   private links: GraphLink[] = [];
   private settings: GraphLinkTypesSettings;
   private app: App;
+  private onSelectRelation?: (relation: ExplicitRelation) => void;
+  private topologyKey = "";
 
   private zoomBehavior: ZoomBehavior<HTMLCanvasElement, unknown>;
   private transform = zoomIdentity;
@@ -53,10 +56,12 @@ export class GraphRenderer2D {
   // Cached parsed force rules per link type
   private forceRuleCache = new Map<string, ForceRule[]>();
 
-  constructor(container: HTMLElement, app: App, settings: GraphLinkTypesSettings) {
+  constructor(container: HTMLElement, app: App, settings: GraphLinkTypesSettings,
+    onSelectRelation?: (relation: ExplicitRelation) => void) {
     this.container = container;
     this.app = app;
     this.settings = settings;
+    this.onSelectRelation = onSelectRelation;
 
     // Resolve CSS variables at construction time for Canvas compatibility
     const cs = getComputedStyle(container);
@@ -144,12 +149,59 @@ export class GraphRenderer2D {
   }
 
   updateData(data: GraphData): void {
-    this.nodes = data.nodes.map((n) => ({ ...n }));
+    const endpointId = (endpoint: string | GraphNode): string =>
+      typeof endpoint === "string" ? endpoint : endpoint.id;
+    const topologyKey = JSON.stringify([
+      data.nodes.map((node) => node.id).sort(),
+      data.links.map((link) => JSON.stringify([
+        endpointId(link.source), endpointId(link.target), link.type,
+        link.kind ?? "", link.relationId ?? "", link.memberCount ?? 0, link.curvature,
+      ])).sort(),
+    ]);
+    const sameTopology = topologyKey === this.topologyKey;
+    const previousNodes = new Map(this.nodes.map((node) => [node.id, node]));
+    const initialLoad = this.nodes.length === 0;
+    const nextNodes: GraphNode[] = data.nodes.map((node) => {
+      const previous = previousNodes.get(node.id);
+      // Layout state belongs to this renderer, never to the authored model.
+      const metadata = {
+        ...node,
+        tags: [...node.tags],
+        properties: Object.fromEntries(Object.entries(node.properties).map(([key, value]) => [key, [...value]])),
+        groupColor: node.groupColor,
+        linkCount: node.linkCount,
+        relation: node.relation,
+      };
+      if (!previous) return metadata;
+      const { x, y, vx, vy, fx, fy, index } = previous;
+      Object.assign(previous, metadata, { x, y, vx, vy, fx, fy, index });
+      return previous;
+    });
+    if (sameTopology) {
+      // Existing force endpoints still point at these same objects. Metadata
+      // refreshes do not restart physics or replace the camera transform.
+      this.render();
+      return;
+    }
+    const nextNodesById = new Map(nextNodes.map((node) => [node.id, node]));
+    const nextNodesBySource = new Map(nextNodes.map((node) => [node.relation?.sourcePath ?? node.id, node]));
+    for (const node of nextNodes) {
+      if (!node.relation || previousNodes.has(node.id)) continue;
+      const positionedMembers = node.relation.members
+        .map((id) => nextNodesBySource.get(id))
+        .filter((member): member is GraphNode => !!member && Number.isFinite(member.x) && Number.isFinite(member.y));
+      if (positionedMembers.length) {
+        node.x = positionedMembers.reduce((sum, member) => sum + member.x!, 0) / positionedMembers.length;
+        node.y = positionedMembers.reduce((sum, member) => sum + member.y!, 0) / positionedMembers.length;
+      }
+    }
+    this.topologyKey = topologyKey;
+    this.nodes = nextNodes;
+    if (this.hoveredNode) this.hoveredNode = nextNodesById.get(this.hoveredNode.id) ?? null;
     this.links = data.links.map((l) => ({
-      source: typeof l.source === "string" ? l.source : l.source.id,
-      target: typeof l.target === "string" ? l.target : l.target.id,
-      type: l.type,
-      curvature: l.curvature,
+      ...l,
+      source: endpointId(l.source),
+      target: endpointId(l.target),
     })) as GraphLink[];
 
     this.rebuildForceRuleCache();
@@ -165,7 +217,9 @@ export class GraphRenderer2D {
 
     if (!this.settings.animate) {
       this.simulation.stop();
-      for (let i = 0; i < 300; i++) this.simulation.tick();
+      // Initial paused graphs still settle as before; later topology refreshes
+      // respect the pause and retain the existing entities' positions.
+      if (initialLoad) for (let i = 0; i < 300; i++) this.simulation.tick();
       this.render();
     }
   }
@@ -274,11 +328,13 @@ export class GraphRenderer2D {
 
   private getNodeRadius(node: GraphNode): number {
     const base = this.settings.nodeSize;
+    if (node.relation) return Math.max(8, base + 3);
     if (!this.settings.scaleNodeByLinks || !node.linkCount) return base;
     return base * (1 + Math.sqrt(Math.max(0, node.linkCount - 1)) * 0.5);
   }
 
   private getNodeColor(node: GraphNode): string {
+    if (node.relation) return this.settings.linkTypes[node.relation.type]?.color ?? "#888";
     if (node.groupColor) return node.groupColor;
     return this.settings.nodeColor;
   }
@@ -298,6 +354,8 @@ export class GraphRenderer2D {
   }
 
   private shouldShowArrow(link: GraphLink): boolean {
+    // Incidences express unordered membership, not a directed pairwise fact.
+    if (link.kind === "membership") return false;
     const mode = this.getLinkConfig(link)?.arrowMode ?? "inherit";
     if (mode === "on") return true;
     if (mode === "off") return false;
@@ -402,7 +460,7 @@ export class GraphRenderer2D {
           this.drawArrowhead(ctx, cpx, cpy, tx, ty, targetRadius, color, alpha, linkWidth);
         }
 
-        if (showLabels && link.type !== UNTYPED_LINK_KEY && t.k > this.settings.edgeLabelThreshold) {
+        if (showLabels && link.kind !== "membership" && link.type !== UNTYPED_LINK_KEY && t.k > this.settings.edgeLabelThreshold) {
           const labelX = (sx + 2 * cpx + tx) / 4;
           const labelY = (sy + 2 * cpy + ty) / 4;
           const fs = 1 / Math.max(t.k, 0.5);
@@ -428,7 +486,7 @@ export class GraphRenderer2D {
           this.drawArrowhead(ctx, sx, sy, tx, ty, targetRadius, color, alpha, linkWidth);
         }
 
-        if (showLabels && link.type !== UNTYPED_LINK_KEY && t.k > this.settings.edgeLabelThreshold) {
+        if (showLabels && link.kind !== "membership" && link.type !== UNTYPED_LINK_KEY && t.k > this.settings.edgeLabelThreshold) {
           const lmx = (sx + tx) / 2;
           const lmy = (sy + ty) / 2;
           const fs = 1 / Math.max(t.k, 0.5);
@@ -460,16 +518,27 @@ export class GraphRenderer2D {
 
       const isHovered = node.id === hoveredId;
       const radius = isHovered ? this.getNodeRadius(node) + 2 : this.getNodeRadius(node);
-      const fillColor = isHovered
+      const fillColor = isHovered && !node.relation
         ? this.settings.nodeColorHover
         : this.getNodeColor(node);
 
       ctx.globalAlpha = alpha;
 
       ctx.beginPath();
-      ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
-
-      if (!node.exists) {
+      if (node.relation) {
+        // Relationship junctions remain visibly distinct from entity circles.
+        ctx.moveTo(node.x, node.y - radius);
+        ctx.lineTo(node.x + radius, node.y);
+        ctx.lineTo(node.x, node.y + radius);
+        ctx.lineTo(node.x - radius, node.y);
+        ctx.closePath();
+        ctx.fillStyle = this.resolvedBgColor;
+        ctx.fill();
+        ctx.strokeStyle = fillColor;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      } else if (!node.exists) {
+        ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
         // Non-existent nodes: dashed stroke outline
         ctx.setLineDash([3, 3]);
         ctx.strokeStyle = fillColor;
@@ -477,6 +546,7 @@ export class GraphRenderer2D {
         ctx.stroke();
         ctx.setLineDash([]);
       } else {
+        ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
         ctx.fillStyle = fillColor;
         ctx.fill();
         // Outline
@@ -486,17 +556,18 @@ export class GraphRenderer2D {
       }
 
       // Node label: always on hover; when showNodeLabels is on, also at zoom > threshold
-      const showLabel = isHovered || (showNodeLabels && t.k > textFadeThreshold);
+      const showLabel = !!node.relation || isHovered || (showNodeLabels && t.k > textFadeThreshold);
       if (showLabel && node.name) {
-        const fs = 1 / Math.max(t.k, 0.5);
-        ctx.font = `${17 * fs}px sans-serif`;
+        const fs = node.relation ? 1 / t.k : 1 / Math.max(t.k, 0.5);
+        ctx.font = `${(node.relation ? 14 : 17) * fs}px sans-serif`;
         ctx.textAlign = "center";
         ctx.lineJoin = "round";
         ctx.lineWidth = 3 * fs;
         ctx.strokeStyle = this.resolvedBgColor;
-        ctx.strokeText(node.name, node.x, node.y - radius - 4);
+        const label = node.relation ? `${node.relation.sourceName} [${node.relation.id}]` : node.name;
+        ctx.strokeText(label, node.x, node.y - radius - 4);
         ctx.fillStyle = this.resolvedTextColor;
-        ctx.fillText(node.name, node.x, node.y - radius - 4);
+        ctx.fillText(label, node.x, node.y - radius - 4);
       }
 
       ctx.globalAlpha = 1;
@@ -577,7 +648,9 @@ export class GraphRenderer2D {
       this.canvas.style.cursor = node ? "pointer" : "default";
 
       if (node) {
-        this.tooltip.textContent = node.name;
+        this.tooltip.textContent = node.relation
+          ? `${node.relation.sourceName} [${node.relation.id}] · ${node.relation.type} · ${node.relation.members.length} members`
+          : node.name;
         this.tooltip.style.display = "block";
         this.tooltip.style.left = `${event.clientX - this.container.getBoundingClientRect().left + 12}px`;
         this.tooltip.style.top = `${event.clientY - this.container.getBoundingClientRect().top - 8}px`;
@@ -595,10 +668,13 @@ export class GraphRenderer2D {
   private onClick = (event: MouseEvent): void => {
     const { x, y } = this.getMousePos(event);
     const node = this.findNode(x, y);
-    if (node) {
-      this.app.workspace.openLinkText(node.id, "", false);
-    }
+    if (node) this.selectNode(node);
   };
+
+  private selectNode(node: GraphNode): void {
+    if (node.relation && this.onSelectRelation) this.onSelectRelation(node.relation);
+    else this.app.workspace.openLinkText(node.relation?.sourcePath ?? node.id, "", false);
+  }
 
   private onContextMenu = (event: MouseEvent): void => {
     event.preventDefault();
@@ -617,7 +693,7 @@ export class GraphRenderer2D {
     openItem.className = "gps-context-menu-item";
     openItem.textContent = "Open note";
     openItem.addEventListener("click", () => {
-      this.app.workspace.openLinkText(node.id, "", false);
+      this.app.workspace.openLinkText(node.relation?.sourcePath ?? node.id, "", false);
       this.dismissContextMenu();
     });
 
@@ -625,7 +701,7 @@ export class GraphRenderer2D {
     openNewTab.className = "gps-context-menu-item";
     openNewTab.textContent = "Open in new tab";
     openNewTab.addEventListener("click", () => {
-      this.app.workspace.openLinkText(node.id, "", "tab");
+      this.app.workspace.openLinkText(node.relation?.sourcePath ?? node.id, "", "tab");
       this.dismissContextMenu();
     });
 
@@ -668,12 +744,17 @@ export class GraphRenderer2D {
 
   private getLinkStrength(link: any): number {
     const attraction = this.settings.linkTypes[link.type]?.attraction ?? 1;
+    if (link.kind === "membership") {
+      return getMembershipLinkStrength(this.settings.linkStrength, attraction, link.memberCount);
+    }
     return getEffectiveLinkStrength(this.settings.linkStrength, attraction);
   }
 
   private createLinkTypeForce(): (alpha: number) => void {
     return (alpha: number) => {
       for (const link of this.links) {
+        // Directional force rules would invent ordering for unordered members.
+        if (link.kind === "membership") continue;
         const source = link.source as GraphNode;
         const target = link.target as GraphNode;
         if (source.vx == null || target.vx == null) continue;

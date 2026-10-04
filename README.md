@@ -27,6 +27,7 @@ This makes it possible for two equally real relationships to have very different
 - **Typed links** — Links are automatically extracted from:
   - Frontmatter wikilinks (e.g. `parent: [[Note]]`)
   - Inline fields (e.g. `parent:: [[Note]]`, `[parent:: [[Note]]]`, `(parent:: [[Note]])`)
+- **Explicit multi-member relations** — Opt-in relationship notes retain their authored identity and unordered membership. In 2D, each relation has a labelled diamond junction; standard 2D and 3D retain its source note and membership connections.
 - **Semantic relationship styling** — Per-type color, line style, width, opacity, and arrow behavior
 - **Per-type relationship physics** — Independent distance and attraction multipliers
 - **2D and 3D rendering** — Toggle between Canvas-based 2D and WebGL 3D views
@@ -37,6 +38,8 @@ This makes it possible for two equally real relationships to have very different
 - **Non-existent nodes** — Unresolved wikilinks appear with dashed outlines (2D) or wireframe spheres (3D)
 
 ## Link Parsing
+
+For Milestone 2A relationship-note syntax, projection behavior, diagnostics, and the membership-normalized force convention, see [Explicit hyperrelations](docs/hyperrelations.md). Ordinary-note parsing remains available alongside these records.
 
 Links are detected from two sources.
 
@@ -106,6 +109,8 @@ The settings are stored in plugin configuration, not written into the notes them
 
 Effective spring strength is `base link force × attraction multiplier`, capped at 2 in both renderers to keep strong relationships from destabilizing the D3 simulation.
 
+Explicit unordered membership divides this capped attraction across the authored member count. Its connections have no arrows or directional force rules; ordinary directed links keep their existing behavior.
+
 Width, arrow behavior, distance and attraction are also honored in 3D. Per-type dash patterns and opacity are currently 2D-first.
 
 ## Advanced link forces
@@ -165,6 +170,8 @@ Planned directions include:
 - social / organizational / geographic / evidence projections
 - graph-derived centrality and clustering overlays
 - richer 3D relationship rendering
+- shaded hyperrelation regions, centrality and node importance
+- multiway evolution, rewrite rules, and possible Wolfram|Alpha integration
 
 ## Architecture
 
