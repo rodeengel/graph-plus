@@ -1,7 +1,7 @@
 {
   "id": "graph-plus-semantic",
   "name": "Graph Plus Semantic",
-  "version": "0.2.0-semantic.2a",
+  "version": "0.2.0-semantic.2a.1",
   "minAppVersion": "1.0.0",
   "description": "Semantic force-directed graph view with typed relationship styling and per-link-type layout behavior in 2D and 3D.",
   "author": "Nicolas Ong / rodeengel fork",

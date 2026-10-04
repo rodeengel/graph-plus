@@ -31,6 +31,7 @@ This makes it possible for two equally real relationships to have very different
 - **Semantic relationship styling** — Per-type color, line style, width, opacity, and arrow behavior
 - **Per-type relationship physics** — Independent distance and attraction multipliers
 - **2D and 3D rendering** — Toggle between Canvas-based 2D and WebGL 3D views
+- **Middle-click focus** — Center the camera on a node at the current zoom without opening its note or moving the layout; includes 2D relationship junctions. Middle-drag zoom in 3D remains available.
 - **Overlay sidebar** — Tune the graph without shrinking the canvas
 - **Node groups** — Color nodes by query (path, tags, properties, filename)
 - **Advanced link forces** — Optional directional forces per relationship type

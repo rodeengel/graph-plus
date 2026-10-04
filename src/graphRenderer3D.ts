@@ -18,6 +18,20 @@ export class GraphRenderer3D {
   private pendingData: GraphData | null = null;
   private THREE: any = null;
   private forceRuleCache = new Map<string, ForceRule[]>();
+  private focusCanvas: HTMLCanvasElement | null = null;
+  private middleClick: { pointerId: number; x: number; y: number; node: any; dragged: boolean } | null = null;
+  private suppressMiddleAuxClick = false;
+
+  private onMiddlePointerDown = (event: PointerEvent): void => this.startMiddleClick(event);
+  private onMiddlePointerMove = (event: PointerEvent): void => this.moveMiddleClick(event);
+  private onMiddlePointerUp = (event: PointerEvent): void => this.endMiddleClick(event);
+  private onMiddlePointerCancel = (): void => { this.middleClick = null; };
+  private onMiddleAuxClick = (event: MouseEvent): void => {
+    if (event.button === 1 && this.suppressMiddleAuxClick) {
+      event.preventDefault();
+      this.suppressMiddleAuxClick = false;
+    }
+  };
 
   constructor(container: HTMLElement, app: App, settings: GraphLinkTypesSettings) {
     this.container = container;
@@ -123,6 +137,8 @@ export class GraphRenderer3D {
         .onNodeRightClick((node: any) => {
           this.app.workspace.openLinkText(node.id, "", "tab");
         });
+
+      this.attachFocusInteractions(this.graph.renderer().domElement);
 
       // Configure forces — use forceX/Y/Z instead of forceCenter
       // (forceCenter only shifts center of mass, doesn't pull orphans back)
@@ -258,6 +274,94 @@ export class GraphRenderer3D {
     this.graph.zoomToFit(400);
   }
 
+  private attachFocusInteractions(canvas: HTMLCanvasElement): void {
+    this.focusCanvas = canvas;
+    // In the installed libraries, navigation controls register synchronously
+    // during graph construction. Node DragControls register later, after the
+    // asynchronous data digest, and are recreated after later data updates.
+    // Bubble ordering lets navigation see middle presses first, then prevents
+    // the node dragger from pinning/reheating nodes for that same gesture.
+    canvas.addEventListener("pointerdown", this.onMiddlePointerDown);
+    canvas.addEventListener("pointermove", this.onMiddlePointerMove, true);
+    canvas.addEventListener("pointerup", this.onMiddlePointerUp, true);
+    canvas.addEventListener("pointercancel", this.onMiddlePointerCancel, true);
+    canvas.addEventListener("auxclick", this.onMiddleAuxClick);
+  }
+
+  private startMiddleClick(event: PointerEvent): void {
+    if (event.button !== 1 || this.destroyed) return;
+    this.suppressMiddleAuxClick = false;
+    const node = this.pickNodeAt(event.clientX, event.clientY);
+    this.middleClick = node ? {
+      pointerId: event.pointerId, x: event.clientX, y: event.clientY, node, dragged: false,
+    } : null;
+    event.stopImmediatePropagation();
+    // The renderer tracks presses on the canvas parent. Forward the press only
+    // to that parent, so its normal move/up handlers can clear drag/hover state
+    // without sending a second press to navigation or the node dragger.
+    this.focusCanvas?.parentElement?.dispatchEvent(new PointerEvent("pointerdown", event));
+    // Prevent native autoscroll on a node, without blocking pointer events from
+    // the graph's navigation controls. A moved gesture still remains a zoom.
+    if (node) event.preventDefault();
+  }
+
+  private moveMiddleClick(event: PointerEvent): void {
+    const click = this.middleClick;
+    if (!click || click.pointerId !== event.pointerId) return;
+    if (Math.hypot(event.clientX - click.x, event.clientY - click.y) > 4) click.dragged = true;
+  }
+
+  private endMiddleClick(event: PointerEvent): void {
+    const click = this.middleClick;
+    if (!click || click.pointerId !== event.pointerId || event.button !== 1) return;
+    this.middleClick = null;
+    if (click.dragged || Math.hypot(event.clientX - click.x, event.clientY - click.y) > 4) return;
+    if (!this.graph?.graphData().nodes.includes(click.node)) return;
+    this.focusNode(click.node);
+    this.suppressMiddleAuxClick = true;
+    event.preventDefault();
+  }
+
+  private pickNodeAt(clientX: number, clientY: number): any | null {
+    if (!this.graph || !this.THREE || !this.focusCanvas) return null;
+    const rect = this.focusCanvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    const camera = this.graph.camera();
+    this.graph.scene().updateMatrixWorld(true);
+    camera.updateMatrixWorld(true);
+    const raycaster = new this.THREE.Raycaster();
+    raycaster.setFromCamera(new this.THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    ), camera);
+    // Use the library's current displayed objects, including missing-note
+    // wireframes. This does not depend on its throttled hover state.
+    const objects = this.graph.graphData().nodes
+      .map((node: any) => node.__threeObj)
+      .filter((object: any) => object && object.visible !== false);
+    for (const hit of raycaster.intersectObjects(objects, true)) {
+      let object = hit.object;
+      while (object && !Object.prototype.hasOwnProperty.call(object, "__graphObjType")) object = object.parent;
+      if (object?.__graphObjType === "node") return object.__data ?? null;
+    }
+    return null;
+  }
+
+  private focusNode(node: any): void {
+    if (!this.graph || this.destroyed || ![node.x, node.y, node.z].every(Number.isFinite)) return;
+    const position = this.graph.cameraPosition();
+    const controls = this.graph.controls() as { target?: { x: number; y: number; z: number } };
+    const target = controls.target ?? (position as any).lookAt ?? { x: 0, y: 0, z: 0 };
+    if (![position.x, position.y, position.z, target.x, target.y, target.z].every(Number.isFinite)) return;
+    // Translate the camera and its target together: orientation and current
+    // camera-to-target distance stay unchanged, and no layout state is touched.
+    this.graph.cameraPosition({
+      x: position.x + node.x - target.x,
+      y: position.y + node.y - target.y,
+      z: position.z + node.z - target.z,
+    }, { x: node.x, y: node.y, z: node.z });
+  }
+
   private rebuildForceRuleCache(): void {
     this.forceRuleCache.clear();
     for (const [type, config] of Object.entries(this.settings.linkTypes)) {
@@ -320,6 +424,15 @@ export class GraphRenderer3D {
 
   destroy(): void {
     this.destroyed = true;
+    if (this.focusCanvas) {
+      this.focusCanvas.removeEventListener("pointerdown", this.onMiddlePointerDown);
+      this.focusCanvas.removeEventListener("pointermove", this.onMiddlePointerMove, true);
+      this.focusCanvas.removeEventListener("pointerup", this.onMiddlePointerUp, true);
+      this.focusCanvas.removeEventListener("pointercancel", this.onMiddlePointerCancel, true);
+      this.focusCanvas.removeEventListener("auxclick", this.onMiddleAuxClick);
+      this.focusCanvas = null;
+    }
+    this.middleClick = null;
     this.resizeObserver.disconnect();
     if (this.graph) {
       if (typeof this.graph._destructor === "function") {

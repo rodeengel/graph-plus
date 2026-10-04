@@ -13,6 +13,7 @@ const result = esbuild.buildSync({
       'export { GraphRenderer2D } from "./src/graphRenderer2D";',
       'export { GraphRenderer3D } from "./src/graphRenderer3D";',
       'export { DEFAULT_SETTINGS, createLinkTypeConfig } from "./src/types";',
+      'export { zoom, zoomIdentity } from "d3-zoom";',
       'export { forceSimulation, forceLink, forceManyBody, forceCollide, forceX, forceY } from "d3-force";',
       'export { forceSimulation as forceSimulation3D, forceLink as forceLink3D, forceManyBody as forceManyBody3D, forceZ } from "d3-force-3d";',
     ].join("\n"),
@@ -32,6 +33,7 @@ compiled.paths = module.paths;
 compiled._compile(result.outputFiles[0].text, compiled.filename);
 const { GraphRenderer2D, GraphRenderer3D, DEFAULT_SETTINGS, createLinkTypeConfig } = compiled.exports;
 const { forceSimulation, forceLink, forceManyBody, forceCollide, forceX, forceY, forceSimulation3D, forceLink3D, forceManyBody3D, forceZ } = compiled.exports;
+const { zoom, zoomIdentity } = compiled.exports;
 
 function settings(linkTypes = {}, overrides = {}) {
   return { ...DEFAULT_SETTINGS, linkTypes, ...overrides };
@@ -618,5 +620,156 @@ test("paused 2D junction clicks do not resume physics and dragging moves only th
     assert.deepEqual([junction.fx, junction.fy], [null, null]);
   } finally {
     renderer.simulation.stop();
+  }
+});
+
+test("2D middle-click centers entities and junctions through the real zoom behavior without changing layout", async () => {
+  const entity = { ...node("a", 120, 180), vx: 0.2, vy: -0.1, fx: 120, fy: 180 };
+  const junction = { ...node("junction", 250, 270), relation: explicitRelation(), vx: -0.1, vy: 0.2 };
+  const renderer = fixture2D(settings({}, { animate: false }), [], [entity, junction], entity);
+  const positions = renderer.nodes.map(({ x, y, vx, vy, fx, fy }) => ({ x, y, vx, vy, fx, fy }));
+  renderer.canvas = new EventTarget();
+  renderer.canvas.getBoundingClientRect = () => ({ left: 30, top: 40 });
+  renderer.transform = renderer.canvas.__zoom = zoomIdentity.translate(43, -51).scale(1.75);
+  renderer.tooltip = { style: { display: "block" } };
+  renderer.simulation = { restart() { throw new Error("Camera focus restarted the layout"); } };
+  renderer.app = { workspace: { openLinkText() { throw new Error("Middle-click opened a note"); } } };
+  renderer.zoomBehavior = zoom().extent([[0, 0], [800, 600]])
+    .on("zoom", event => { renderer.transform = event.transform; renderer.render(); });
+
+  for (const target of [entity, junction]) {
+    const event = {
+      button: 1, clientX: 30 + target.x * renderer.transform.k + renderer.transform.x,
+      clientY: 40 + target.y * renderer.transform.k + renderer.transform.y,
+      prevented: 0, stopped: 0,
+      preventDefault() { this.prevented++; }, stopPropagation() { this.stopped++; },
+    };
+    renderer.onMiddleMouseDown(event);
+    const ended = new Promise(resolve => renderer.zoomBehavior.on("end.focus-test", resolve));
+    renderer.onAuxClick(event);
+    await ended;
+    assert.equal(event.prevented, 2, "Node press and auxiliary click cancel browser autoscroll");
+    assert.equal(event.stopped, 1);
+    assert.equal(renderer.transform.k, 1.75);
+    assert.ok(Math.abs(target.x * renderer.transform.k + renderer.transform.x - 400) < 1e-8);
+    assert.ok(Math.abs(target.y * renderer.transform.k + renderer.transform.y - 300) < 1e-8);
+    assert.strictEqual(renderer.canvas.__zoom, renderer.transform, "Later zoom gestures use the focused transform");
+    assert.equal(renderer.hoveredNode, null);
+    assert.equal(renderer.tooltip.style.display, "none");
+    assert.deepEqual(renderer.nodes.map(({ x, y, vx, vy, fx, fy }) => ({ x, y, vx, vy, fx, fy })), positions);
+  }
+});
+
+test("2D middle-click ignores other buttons, empty space, and disposed renderers", () => {
+  const renderer = fixture2D(settings(), [], [node("a", 100, 100)]);
+  renderer.canvas = { getBoundingClientRect: () => ({ left: 30, top: 40 }) };
+  renderer.focusNode = () => { throw new Error("Unexpected camera focus"); };
+  const event = button => ({
+    button, clientX: 130, clientY: 140,
+    preventDefault() { throw new Error("Unrelated gesture was cancelled"); },
+    stopPropagation() { throw new Error("Unrelated gesture was intercepted"); },
+  });
+  for (const button of [0, 2]) {
+    renderer.onMiddleMouseDown(event(button));
+    renderer.onAuxClick(event(button));
+  }
+  renderer.onMiddleMouseDown({ ...event(1), clientX: 500 });
+  renderer.onAuxClick(event(1)); // A background press released over a node is not a click on that node.
+  renderer.onMiddleMouseDown({ ...event(1), preventDefault() {} });
+  renderer.trackMiddleClick({ ...event(1), clientX: 140 });
+  renderer.trackMiddleClick(event(1));
+  renderer.onAuxClick(event(1)); // Returning to the initial point is still a drag.
+  renderer.destroyed = true;
+  renderer.onAuxClick(event(1));
+});
+
+test("3D middle-click preserves camera offset and layout while middle-drag remains navigation", () => {
+  const renderer = Object.create(GraphRenderer3D.prototype);
+  const target = { ...node("a", 20, -10), z: 30, vx: 0.2, vy: -0.1, vz: 0.3, fx: 20 };
+  const original = { ...target };
+  const focusCalls = [];
+  renderer.destroyed = false;
+  renderer.middleClick = null;
+  renderer.pickNodeAt = x => x < 200 ? target : null;
+  renderer.graph = {
+    graphData: () => ({ nodes: [target] }),
+    controls: () => ({ target: { x: 10, y: 15, z: 20 } }),
+    cameraPosition(...args) {
+      if (!args.length) return { x: 100, y: 60, z: 80 };
+      focusCalls.push(args);
+    },
+    d3ReheatSimulation() { throw new Error("Focus restarted the layout"); },
+  };
+  const event = (button, x = 100, y = 100, pointerId = 1) => ({
+    button, clientX: x, clientY: y, pointerId, prevented: 0,
+    preventDefault() { this.prevented++; },
+    stopImmediatePropagation() { this.blockedNodeDrag = true; },
+    stopPropagation() { throw new Error("Navigation propagation was blocked"); },
+  });
+  renderer.startMiddleClick(event(0));
+  renderer.startMiddleClick(event(2));
+  assert.equal(renderer.middleClick, null);
+  renderer.startMiddleClick(event(1, 250));
+  renderer.endMiddleClick(event(1, 250));
+  assert.equal(focusCalls.length, 0, "Background clicks leave the camera alone");
+
+  const press = event(1);
+  renderer.startMiddleClick(press);
+  assert.equal(press.blockedNodeDrag, true, "Middle-button node dragging is blocked after camera navigation receives the press");
+  renderer.moveMiddleClick(event(1, 105));
+  renderer.moveMiddleClick(event(1)); // Returning to the press point is still a drag.
+  renderer.endMiddleClick(event(1));
+  assert.equal(focusCalls.length, 0, "A middle-drag never becomes a focus click");
+
+  renderer.startMiddleClick(event(1));
+  renderer.endMiddleClick(event(1, 100, 100, 2));
+  assert.equal(focusCalls.length, 0, "An unrelated pointer cannot finish the gesture");
+  renderer.endMiddleClick(event(1, 102, 100));
+  assert.deepEqual(focusCalls, [[{ x: 110, y: 35, z: 90 }, { x: 20, y: -10, z: 30 }]]);
+  assert.deepEqual(target, original, "Camera focus leaves positions, velocity and pins unchanged");
+
+  renderer.startMiddleClick(event(1));
+  renderer.graph.graphData = () => ({ nodes: [] });
+  renderer.endMiddleClick(event(1));
+  assert.equal(focusCalls.length, 1, "A node removed during the gesture is not focused");
+  renderer.destroyed = true;
+  renderer.focusNode(target);
+  assert.equal(focusCalls.length, 1);
+});
+
+test("3D middle-click raycasts current displayed nodes, including child wireframes", () => {
+  const THREE = require("three");
+  const renderer = Object.create(GraphRenderer3D.prototype);
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+  camera.position.z = 10;
+  camera.lookAt(0, 0, 0);
+  const scene = new THREE.Scene();
+  const near = node("near", 0, 0), far = node("far", 0, 0);
+  const nearGroup = new THREE.Group();
+  const sphere = new THREE.SphereGeometry(1);
+  const nearMesh = new THREE.LineSegments(new THREE.WireframeGeometry(sphere), new THREE.LineBasicMaterial());
+  sphere.dispose();
+  nearGroup.add(nearMesh);
+  nearGroup.position.z = 2;
+  nearGroup.__graphObjType = "node";
+  nearGroup.__data = near;
+  near.__threeObj = nearGroup;
+  const farMesh = new THREE.Mesh(new THREE.SphereGeometry(1), new THREE.MeshBasicMaterial());
+  farMesh.position.x = 0.2; // Avoid a ray exactly on the sphere's tessellation seam.
+  farMesh.__graphObjType = "node";
+  farMesh.__data = far;
+  far.__threeObj = farMesh;
+  scene.add(nearGroup, farMesh);
+  renderer.THREE = THREE;
+  renderer.focusCanvas = { getBoundingClientRect: () => ({ left: 30, top: 40, width: 200, height: 200 }) };
+  renderer.graph = { camera: () => camera, scene: () => scene, graphData: () => ({ nodes: [near, far] }) };
+  try {
+    assert.strictEqual(renderer.pickNodeAt(130, 140), near, "The closest displayed node wins, without hover state");
+    nearGroup.visible = false;
+    assert.strictEqual(renderer.pickNodeAt(130, 140), far, "Hidden nodes are ignored");
+    assert.equal(renderer.pickNodeAt(31, 41), null, "Empty space is not a node");
+  } finally {
+    nearMesh.geometry.dispose(); nearMesh.material.dispose();
+    farMesh.geometry.dispose(); farMesh.material.dispose();
   }
 });

@@ -43,6 +43,8 @@ export class GraphRenderer2D {
   private hoveredNode: GraphNode | null = null;
   private tooltip: HTMLElement;
   private contextMenu: HTMLElement | null = null;
+  private middleClick: { node: GraphNode; x: number; y: number; dragged: boolean } | null = null;
+  private cancelMiddleClick = (): void => { this.middleClick = null; };
 
   private width = 0;
   private height = 0;
@@ -127,6 +129,11 @@ export class GraphRenderer2D {
     // Mouse events for hover and click
     this.canvas.addEventListener("mousemove", this.onMouseMove);
     this.canvas.addEventListener("click", this.onClick);
+    this.onMiddleMouseDown = this.onMiddleMouseDown.bind(this);
+    this.onAuxClick = this.onAuxClick.bind(this);
+    this.canvas.addEventListener("mousedown", this.onMiddleMouseDown);
+    this.canvas.addEventListener("auxclick", this.onAuxClick);
+    this.canvas.addEventListener("mouseleave", this.cancelMiddleClick);
     this.canvas.addEventListener("contextmenu", this.onContextMenu);
     document.addEventListener("click", this.dismissContextMenu);
 
@@ -675,6 +682,7 @@ export class GraphRenderer2D {
   }
 
   private onMouseMove = (event: MouseEvent): void => {
+    this.trackMiddleClick(event);
     const { x, y } = this.getMousePos(event);
     const node = this.findNode(x, y);
 
@@ -701,10 +709,58 @@ export class GraphRenderer2D {
   };
 
   private onClick = (event: MouseEvent): void => {
+    if (event.button !== 0) return;
     const { x, y } = this.getMousePos(event);
     const node = this.findNode(x, y);
     if (node) this.selectNode(node);
   };
+
+  private onMiddleMouseDown(event: MouseEvent): void {
+    this.middleClick = null;
+    if (event.button !== 1) return;
+    const { x, y } = this.getMousePos(event);
+    const node = this.findNode(x, y);
+    // Cancel browser autoscroll on nodes; background gestures stay unchanged.
+    if (node) {
+      this.middleClick = { node, x: event.clientX, y: event.clientY, dragged: false };
+      event.preventDefault();
+    }
+  }
+
+  private trackMiddleClick(event: MouseEvent): void {
+    const click = this.middleClick;
+    if (click && Math.hypot(event.clientX - click.x, event.clientY - click.y) > 4) click.dragged = true;
+  }
+
+  private onAuxClick(event: MouseEvent): void {
+    if (event.button !== 1 || this.destroyed) return;
+    const click = this.middleClick;
+    this.middleClick = null;
+    if (!click || click.dragged || Math.hypot(event.clientX - click.x, event.clientY - click.y) > 4) return;
+    const { x, y } = this.getMousePos(event);
+    const node = this.findNode(x, y);
+    if (!node || node !== click.node) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.focusNode(node);
+  }
+
+  private focusNode(node: GraphNode): void {
+    if (this.destroyed || !Number.isFinite(node.x) || !Number.isFinite(node.y)) return;
+    const scale = this.transform.k;
+    const next = zoomIdentity
+      .translate(this.width / 2 - node.x! * scale, this.height / 2 - node.y! * scale)
+      .scale(scale);
+    this.hoveredNode = null;
+    this.tooltip.style.display = "none";
+    // Move only the camera. The zoom behavior keeps its internal transform in
+    // sync, so subsequent wheel zooms and drags do not jump back.
+    select(this.canvas)
+      .interrupt()
+      .transition()
+      .duration(300)
+      .call(this.zoomBehavior.transform as any, next);
+  }
 
   private selectNode(node: GraphNode): void {
     if (node.relation && this.onSelectRelation) this.onSelectRelation(node.relation);
@@ -818,6 +874,10 @@ export class GraphRenderer2D {
     this.resizeObserver.disconnect();
     this.canvas.removeEventListener("mousemove", this.onMouseMove);
     this.canvas.removeEventListener("click", this.onClick);
+    this.canvas.removeEventListener("mousedown", this.onMiddleMouseDown);
+    this.canvas.removeEventListener("auxclick", this.onAuxClick);
+    this.canvas.removeEventListener("mouseleave", this.cancelMiddleClick);
+    this.middleClick = null;
     this.canvas.removeEventListener("contextmenu", this.onContextMenu);
     document.removeEventListener("click", this.dismissContextMenu);
     this.dismissContextMenu();
