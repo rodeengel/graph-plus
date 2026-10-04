@@ -35,7 +35,7 @@ Relationship type counts count each explicit relation once, plus its ordinary ty
 
 ## Appearance and layout
 
-In 2D, membership connections reuse the type's color, line style, width, opacity, visibility, distance, and attraction. 3D retains global opacity and does not apply per-type dash patterns. Junctions use their relationship type color and are always labelled with the source name and authored ID. Unordered membership ignores global/per-type arrows and directional force rules. Ordinary directed links keep arrow and directional behavior. Legacy extra distance multipliers still apply.
+In both views, membership connections reuse the type's color, solid/dashed/dotted line style, width, opacity, visibility, distance, and attraction. Native 3D connections occupy scene coordinates, including curved and parallel links, and use `global 3D Link opacity x type opacity`. Zero opacity hides the connection and any ordinary arrowheads without changing authored records or springs. Junctions use their relationship type color and are always labelled with the source name and authored ID. Unordered membership ignores global/per-type arrows and directional force rules. Ordinary directed links keep inherited/on/off arrows and directional behavior. Legacy extra distance multipliers still apply.
 
 For an authored relation with `n` members:
 
@@ -49,7 +49,7 @@ each membership connection's spring strength
 
 The sum of configured spring strengths is bounded by 2. Filtering uses the original authored member count, so hiding a member does not strengthen the remaining connections. Attraction zero disables the membership springs. D3's degree bias, charge, centering, collision, and other relationships also influence final positions; this is a layout convention, not a physical model or Wolfram physics.
 
-Visual changes redraw without restarting layout. Metadata-only refreshes reuse simulation objects in both renderers. Topology changes retain surviving node state where applicable. A paused topology update keeps surviving positions, while new nodes initialize. The initial paused graph may settle once. In 3D, pausing stops force stepping while rendering and camera navigation remain active. Switching between 2D and 3D creates the chosen renderer; camera preservation across that mode switch is not promised. Existing collapsed-menu and group-editor preservation remains in place. Profiles include both projection toggles and relationship appearance/force settings. See [Native 3D slice 1](native3d.md); 3D patterns/opacity and enclosures are subsequent bounded slices, not completed parity.
+Visual changes redraw without restarting layout. Metadata-only refreshes reuse simulation objects in both renderers. Topology changes retain surviving node state where applicable. A paused topology update keeps surviving positions, while new nodes initialize. The initial paused graph may settle once. In 3D, pausing stops force stepping while rendering and camera navigation remain active. Switching between 2D and 3D creates the chosen renderer; camera preservation across that mode switch is not promised. Existing collapsed-menu and group-editor preservation remains in place. Profiles include both projection toggles and relationship appearance/force settings. See [Native 3D slices 1 and 2](native3d.md). Spatial patterns and per-type opacity are included; passive 3D enclosures and shared neighborhood/path calculations remain later bounded work. The full 3D milestone is not complete.
 
 ## Focused acceptance fixtures
 

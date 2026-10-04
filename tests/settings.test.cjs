@@ -237,7 +237,9 @@ test("settings-tab relationship controls update open renderers without rereading
   f.calls.length = 0;
   await f.control("rel: appearance", "dropdown").change("dotted");
   await f.control("rel: opacity").change(0.25);
-  assert.deepEqual(f.calls.map((call) => [call.mode, call.effect]), [["2d", "visual"], ["2d", "visual"]]);
+  assert.deepEqual(f.calls.map((call) => [call.mode, call.effect]), [
+    ["2d", "visual"], ["3d", "visual"], ["2d", "visual"], ["3d", "visual"],
+  ]);
   assert.equal(f.reads(), 0);
   assert.equal(f.saved.length, 4);
   assert.equal(f.sidebarRefreshes(), 0, "Appearance and force changes sync existing controls without rebuilding menus");
@@ -688,7 +690,7 @@ test("pause settings and sidebar controls reach the active 3D renderer without r
 test("appearance-only 3D profiles survive JSON reload and keep paused data, inactive projection and editor objects intact", async () => {
   const f = fixture({ defaultMode: "3d", animate: false, nodeGroups: [{ query: "file:A", color: "#112233" }] });
   f.view.renderer2D = null;
-  Object.assign(f.settings.linkTypes.rel, { color: "#42d4f4", widthMultiplier: 2, arrowMode: "on" });
+  Object.assign(f.settings.linkTypes.rel, { color: "#42d4f4", widthMultiplier: 2, arrowMode: "on", lineStyle: "dotted", opacity: 0.25 });
   f.settings.linkOpacity = 0.4;
   const profileEditor = new HostElement();
   f.view.buildProfileEditor(profileEditor);
@@ -696,7 +698,7 @@ test("appearance-only 3D profiles survive JSON reload and keep paused data, inac
   await profileEditor.find(element => element.text === "Save").fire("click");
   const stored = copy(f.saved.at(-1).profiles[0]);
   assert.equal(stored.snapshot.hypergraph3D, true);
-  Object.assign(f.settings.linkTypes.rel, { color: "#ffffff", widthMultiplier: 1, arrowMode: "off" });
+  Object.assign(f.settings.linkTypes.rel, { color: "#ffffff", widthMultiplier: 1, arrowMode: "off", lineStyle: "solid", opacity: 1 });
   f.settings.linkOpacity = 1;
   f.settings.hypergraph2D = false;
   const panel = realSidebar(f);
@@ -711,6 +713,8 @@ test("appearance-only 3D profiles survive JSON reload and keep paused data, inac
   assert.equal(f.settings.linkTypes.rel.color, "#42d4f4");
   assert.equal(f.settings.linkTypes.rel.widthMultiplier, 2);
   assert.equal(f.settings.linkTypes.rel.arrowMode, "on");
+  assert.equal(f.settings.linkTypes.rel.lineStyle, "dotted");
+  assert.equal(f.settings.linkTypes.rel.opacity, 0.25);
   assert.equal(f.settings.linkOpacity, 0.4);
   assert.equal(f.settings.animate, false);
   assert.equal(f.settings.nodeGroups, groups);
@@ -723,26 +727,35 @@ test("appearance-only 3D profiles survive JSON reload and keep paused data, inac
   f.tab.hide();
 });
 
-test("3D-only contexts visibly disable pending per-type patterns and opacity while retaining supported controls", async () => {
+test("3D-only contexts enable spatial patterns and opacity in sidebar and settings tab without replacing menus", async () => {
   const f = fixture({ defaultMode: "3d" });
   const panel = realSidebar(f);
   const grid = section(panel, "Relationship Types").content.find(element => element.cls === "gps-link-style-grid");
   const pattern = grid.children.find(element => element.children.some(child => child.text === "Style")).find(element => element.tag === "select");
   const opacity = grid.children.find(element => element.children.some(child => child.text === "Opacity")).find(element => element.tag === "input");
   const width = grid.children.find(element => element.children.some(child => child.text === "Width ×")).find(element => element.tag === "input");
-  assert.equal(pattern.disabled, true);
-  assert.equal(opacity.disabled, true);
+  assert.notEqual(pattern.disabled, true);
+  assert.notEqual(opacity.disabled, true);
   assert.notEqual(width.disabled, true);
-  assert.equal(f.control("rel: appearance", "dropdown").disabled, true);
-  assert.equal(f.control("rel: opacity").disabled, true);
+  assert.notEqual(f.control("rel: appearance", "dropdown").disabled, true);
+  assert.notEqual(f.control("rel: opacity").disabled, true);
   assert.notEqual(f.control("rel: width").disabled, true);
-  assert.match(f.view.relationshipStyleStatusEl.textContent, /unavailable in 3D in this slice/);
+  assert.match(f.view.relationshipStyleStatusEl.textContent, /global Link opacity x type opacity/);
+  assert.match(f.view.relationshipStyleStatusEl.textContent, /zero hides the connection and its arrows/);
+  f.view.renderer2D = null;
+  await f.control("rel: appearance", "dropdown").change("dashed");
+  await f.control("rel: opacity").change(0);
+  assert.deepEqual(f.calls.map(call => [call.mode, call.effect]), [["3d", "visual"], ["3d", "visual"]]);
+  assert.equal(f.settings.linkTypes.rel.lineStyle, "dashed");
+  assert.equal(f.settings.linkTypes.rel.opacity, 0);
+  assert.equal(section(panel, "Relationship Types").content.find(element => element.cls === "gps-link-style-grid"), grid);
+  assert.equal(f.reads(), 0);
   f.view.initRenderer = () => {};
   await f.view.modeBtnEl.fire("click");
-  assert.equal(pattern.disabled, false);
-  assert.equal(opacity.disabled, false);
-  assert.equal(f.control("rel: appearance", "dropdown").disabled, false);
-  assert.equal(f.control("rel: opacity").disabled, false);
+  assert.notEqual(pattern.disabled, true);
+  assert.notEqual(opacity.disabled, true);
+  assert.notEqual(f.control("rel: appearance", "dropdown").disabled, true);
+  assert.notEqual(f.control("rel: opacity").disabled, true);
   f.tab.hide();
 });
 

@@ -6,6 +6,7 @@ import { applyNodeGroups } from "./linkParser";
 import { forceX, forceY } from "d3-force";
 // @ts-expect-error — d3-force-3d does not ship TypeScript declarations.
 import { forceZ } from "d3-force-3d";
+import type { SpatialLink3D, SpatialLinkAppearance } from "./spatialLink3D";
 
 export class GraphRenderer3D {
   private container: HTMLElement;
@@ -28,6 +29,8 @@ export class GraphRenderer3D {
   private selectionDirty = true;
   private layoutStopped = false;
   private pendingCamera: { position: any; quaternion: any; up: any; target: any } | null = null;
+  private SpatialLink: typeof SpatialLink3D | null = null;
+  private spatialLinks = new Map<any, SpatialLink3D>();
 
   private onMiddlePointerDown = (event: PointerEvent): void => this.startMiddleClick(event);
   private onMiddlePointerMove = (event: PointerEvent): void => this.moveMiddleClick(event);
@@ -82,6 +85,40 @@ export class GraphRenderer3D {
     if (mode === "on") return true;
     if (mode === "off") return false;
     return this.settings.showArrows;
+  }
+
+  private getLinkAppearance(link: any): SpatialLinkAppearance {
+    const config = this.settings.linkTypes[link.type];
+    const width = this.getLinkWidth(link);
+    const target = typeof link.target === "object" ? link.target : null;
+    return {
+      color: config?.color ?? "#888",
+      width, style: config?.lineStyle ?? "solid",
+      opacity: Math.max(0, Math.min(1, this.settings.linkOpacity * (config?.opacity ?? 1))),
+      showArrow: this.shouldShowArrow(link), arrowLength: 6 * (width / 1.5),
+      targetRadius: target ? Math.cbrt(this.getNodeVal(target)) * this.settings.nodeRelSize3D
+        * (target.relation ? 1.25 : 1) : 0,
+    };
+  }
+
+  private createSpatialLink(link: any): any {
+    if (!this.SpatialLink) return undefined;
+    const old = this.spatialLinks.get(link);
+    old?.dispose();
+    old?.group.clear();
+    const spatial = new this.SpatialLink(this.getLinkAppearance(link));
+    this.spatialLinks.set(link, spatial);
+    return spatial.group;
+  }
+
+  private disposeSpatialLinks(): void {
+    // Clear children before the library removes its groups: each geometry and
+    // material has one owner and cannot leak across digests or renderer modes.
+    for (const spatial of this.spatialLinks?.values() ?? []) {
+      spatial.dispose();
+      spatial.group.clear();
+    }
+    this.spatialLinks?.clear();
   }
 
   private nodeThreeObjectFn = (node: any): any => {
@@ -178,12 +215,14 @@ export class GraphRenderer3D {
 
   private async initGraph(): Promise<void> {
     try {
-      const [ForceGraph3DModule, threeModule] = await Promise.all([
+      const [ForceGraph3DModule, threeModule, spatialModule] = await Promise.all([
         import("3d-force-graph"),
         import("three"),
+        import("./spatialLink3D"),
       ]);
       const ForceGraph3D = ForceGraph3DModule.default;
       this.THREE = threeModule;
+      this.SpatialLink = spatialModule.SpatialLink3D;
       if (this.destroyed) return;
 
       const rect = this.wrapper.getBoundingClientRect();
@@ -206,13 +245,20 @@ export class GraphRenderer3D {
           if (link.type === UNTYPED_LINK_KEY) return "";
           return link.type;
         })
-        .linkWidth((link: any) => this.getLinkWidth(link))
         .linkCurvature((link: any) => link.curvature ?? 0)
-        .linkDirectionalArrowLength((link: any) =>
-          this.shouldShowArrow(link) ? 6 * (this.getLinkWidth(link) / 1.5) : 0
-        )
-        .linkDirectionalArrowRelPos(1)
-        .linkOpacity(this.settings.linkOpacity)
+        .linkThreeObject((link: any) => this.createSpatialLink(link))
+        .linkThreeObjectExtend(false)
+        .linkPositionUpdate((_object: any, { start, end }: any, link: any) => {
+          const spatial = this.spatialLinks.get(link);
+          if (spatial) {
+            spatial.updateAppearance(this.getLinkAppearance(link));
+            spatial.updatePosition(start, end, link);
+          }
+          return true;
+        })
+        // Stock arrows multiply alpha independently. Owned arrows apply exactly
+        // the same global-times-type opacity as the spatial connection body.
+        .linkDirectionalArrowLength(0)
         .nodeOpacity(this.settings.nodeOpacity3D)
         .nodeRelSize(this.settings.nodeRelSize3D)
         .onNodeClick((node: any) => {
@@ -373,6 +419,7 @@ export class GraphRenderer3D {
     // object. Projection changes must replace the sphere/octahedron accessor
     // while retaining that same node's layout state and force identity.
     if (visualMetadataChanged) this.graph.nodeThreeObject((node: any) => this.nodeThreeObjectFn(node));
+    this.disposeSpatialLinks();
     this.graph.graphData({ nodes, links });
   }
 
@@ -382,14 +429,11 @@ export class GraphRenderer3D {
 
     this.captureCamera();
     this.selectionDirty = true;
+    for (const [link, spatial] of this.spatialLinks?.entries() ?? []) {
+      spatial.updateAppearance(this.getLinkAppearance(link));
+    }
     this.graph
       .nodeColor((node: any) => node.groupColor || this.settings.nodeColor)
-      .linkColor((link: any) => this.settings.linkTypes[link.type]?.color ?? "#888")
-      .linkWidth((link: any) => this.getLinkWidth(link))
-      .linkDirectionalArrowLength((link: any) =>
-        this.shouldShowArrow(link) ? 6 * (this.getLinkWidth(link) / 1.5) : 0
-      )
-      .linkOpacity(this.settings.linkOpacity)
       .nodeOpacity(this.settings.nodeOpacity3D)
       .nodeRelSize(this.settings.nodeRelSize3D)
       .nodeVal((node: any) => this.getNodeVal(node))
@@ -718,6 +762,7 @@ export class GraphRenderer3D {
     }
     this.middleClick = null;
     this.resizeObserver.disconnect();
+    this.disposeSpatialLinks();
     if (this.graph) {
       if (typeof this.graph._destructor === "function") {
         this.graph._destructor();

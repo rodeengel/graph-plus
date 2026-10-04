@@ -206,7 +206,7 @@ export interface GraphLinkTypesSettings {
   existingOnly: boolean;
   showOrphans: boolean;
   linkThickness: number;    // global base width; per-type widthMultiplier multiplies this
-  linkOpacity: number;      // 0-1, global opacity of links (3D)
+  linkOpacity: number;      // 0-1, multiplies per-type opacity for 3D bodies and arrows
   nodeOpacity3D: number;    // 0-1, opacity of nodes (3D)
   nodeRelSize3D: number;    // sphere scale factor (3D)
   textFadeThreshold: number;
@@ -301,7 +301,7 @@ export const SETTING_DEFS: SettingDef[] = [
   { key: "hypergraph3D", label: "Relationship junctions", desc: "Show explicit multi-member relations as labelled junctions in 3D; disable for the standard note graph", section: "display3d", type: "toggle", effect: "rebuild", renderers: "3d" },
   { key: "nodeRelSize3D", label: "Node scale", desc: "Size of 3D node spheres (1–20)", section: "display3d", type: "slider", min: 1, max: 20, step: 1, effect: "visual", renderers: "3d" },
   { key: "nodeOpacity3D", label: "Node opacity", desc: "Opacity of 3D nodes (0–1)", section: "display3d", type: "slider", min: 0, max: 1, step: 0.05, effect: "visual", renderers: "3d" },
-  { key: "linkOpacity", label: "Link opacity", desc: "Global opacity of 3D links (0–1)", section: "display3d", type: "slider", min: 0, max: 1, step: 0.05, effect: "visual", renderers: "3d" },
+  { key: "linkOpacity", label: "Link opacity", desc: "Multiplies per-type opacity for 3D connections and arrows (0-1); zero hides both", section: "display3d", type: "slider", min: 0, max: 1, step: 0.05, effect: "visual", renderers: "3d" },
 
   // Forces
   { key: "centerForce", label: "Center force", desc: "Pull nodes toward center (0–2)", section: "forces", type: "slider", min: 0, max: 2, step: 0.05, effect: "force" },

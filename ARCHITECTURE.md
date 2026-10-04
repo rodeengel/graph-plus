@@ -25,6 +25,7 @@ src/
   graphView.ts         ItemView panel with semantic relationship editor
   graphRenderer2D.ts   Canvas + d3-force renderer
   graphRenderer3D.ts   WebGL renderer via 3d-force-graph
+  spatialLink3D.ts     Owned spatial line paths, patterns and ordinary arrows
   settings.ts          Plugin settings tab
 styles.css             All CSS
 ```
@@ -133,7 +134,7 @@ Reads all markdown files in the vault and produces a `GraphData` object.
 
 ### `semanticGraph.ts`
 
-Creates deeply frozen copies of authored data independently of simulation coordinates and endpoint mutation. `projectGraphData()` creates a fresh standard or junction projection. Valid relationship notes become one labelled junction in 2D junction mode; standard 2D and 3D retain their actual source-note nodes and incidence connections. Membership is stored once as an explicit relation record, not as invented pairwise facts.
+Creates deeply frozen copies of authored data independently of simulation coordinates and endpoint mutation. `projectGraphData()` creates a fresh standard or junction projection. Valid relationship notes become one labelled junction in either renderer's junction mode; standard 2D and 3D retain their actual source-note nodes and incidence connections. Membership is stored once as an explicit relation record, not as invented pairwise facts.
 
 ### `graphView.ts`
 
@@ -145,7 +146,7 @@ The `ItemView` subclass that owns the UI.
 - **Vault event listeners** — listens for file create/delete/rename/metadata changes and debounces rebuilds (500 ms)
 - **Profiles** — save/load/delete named snapshots of graph settings; semantic relationship configs are part of the snapshot
 
-Settings-tab changes notify open semantic views using the same visual, force, filter and animation effects as sidebar controls. Loading a profile also reapplies the active renderer's force and appearance settings.
+Settings-tab changes notify open semantic views using the same visual, force, filter and animation effects as sidebar controls. Relationship style and opacity changes reach both renderers through visual-only updates. Loading a profile also reapplies the active renderer's force and appearance settings.
 
 ### `graphRenderer2D.ts`
 
@@ -167,10 +168,12 @@ WebGL renderer wrapping the `3d-force-graph` library.
 
 - Lazy-loads `3d-force-graph` and `three`
 - Non-existent nodes render as wireframe spheres
-- Applies per-type width and arrow behavior
+- Renders owned Three.js spatial connections for per-type solid/dashed/dotted patterns, including curves and parallel links
+- Uses supported Three.js wide lines in world units for global thickness x per-type width
+- Applies global 3D opacity x per-type opacity to the connection and its ordinary arrowheads; zero hides both without changing semantics or springs
+- Preserves ordinary inherited/on/off arrows and suppresses unordered-membership arrows
 - Applies per-type distance and attraction physics
-- Uses the global 3D opacity control because the stock `linkOpacity` API is global
-- Per-type dashed/dotted styles remain 2D-first in this milestone
+- Keeps custom connection geometry/material ownership separate from immutable semantics; visual updates do not restart layout, shared materials do not leak style, and owned resources are disposed
 - Three.js Y+ is up (opposite to Canvas Y+ down), so directional forces flip the Y axis
 
 ### `settings.ts`

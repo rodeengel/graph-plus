@@ -13,6 +13,7 @@ const bundle = esbuild.buildSync({
   stdin: {
     contents: [
       'export { GraphRenderer3D } from "./src/graphRenderer3D";',
+      'export { SpatialLink3D } from "./src/spatialLink3D";',
       'export { DEFAULT_SETTINGS, createLinkTypeConfig } from "./src/types";',
       'export { createSemanticGraph, projectGraphData, relationJunctionId } from "./src/semanticGraph";',
       'export { default as ThreeForceGraph } from "three-forcegraph";',
@@ -41,7 +42,7 @@ finally {
   if (priorWindow === undefined) delete global.window;
   else global.window = priorWindow;
 }
-const { GraphRenderer3D, DEFAULT_SETTINGS, createLinkTypeConfig, createSemanticGraph,
+const { GraphRenderer3D, SpatialLink3D, DEFAULT_SETTINGS, createLinkTypeConfig, createSemanticGraph,
   projectGraphData, relationJunctionId, ThreeForceGraph,
   TrackballControls, THREE } = compiled.exports;
 
@@ -164,6 +165,7 @@ async function fixture(run, overrides = {}, beforeReady) {
   }
   finally {
     renderer.destroyed = true;
+    renderer.disposeSpatialLinks();
     controls.dispose();
     engine.graphData({ nodes: [], links: [] }); await digest();
     for (const [key, value] of Object.entries(previous)) {
@@ -198,6 +200,287 @@ test("pending 3D initialization exposes complete authored counts and retains sel
     assert.equal(f.renderer.selectedRelationId, triad.id);
     assert.deepEqual(f.renderer.pendingData.semantic.relations.find(relation => relation.id === triad.id).members, triad.members);
   });
+});
+
+function spatialSource() {
+  const data = fixtureData();
+  const links = [
+    { source: "Alice.md", target: "Bob.md", type: "solid", curvature: 0 },
+    { source: "Alice.md", target: "Bob.md", type: "dashed", curvature: 0 },
+    { source: "Alice.md", target: "Bob.md", type: "dotted", curvature: 0 },
+    { source: "Triad.md", target: "Dan.md", type: "sponsor", curvature: 0 },
+  ];
+  return { ...data, links, semantic: createSemanticGraph(data.nodes, links, data.semantic.relations, []) };
+}
+
+function spatialSettings() {
+  return { linkOpacity: 0.4, linkThickness: 1.8, showArrows: false,
+    linkTypes: {
+      solid: createLinkTypeConfig("#f28c28", { lineStyle: "solid", widthMultiplier: 1, opacity: 1, arrowMode: "inherit" }),
+      dashed: createLinkTypeConfig("#f28c28", { lineStyle: "dashed", widthMultiplier: 2, opacity: 0.5, arrowMode: "on" }),
+      dotted: createLinkTypeConfig("#f28c28", { lineStyle: "dotted", widthMultiplier: 3, opacity: 0.25, arrowMode: "off" }),
+      alliance: createLinkTypeConfig("#00bcd4", { lineStyle: "dotted", opacity: 0.8, arrowMode: "on", attraction: 0.6, distanceMultiplier: 1.2 }),
+      council: createLinkTypeConfig("#d28cff", { attraction: 0.7, distanceMultiplier: 1.1 }),
+    },
+  };
+}
+
+function spatialObjects(f, link) {
+  const spatial = f.renderer.spatialLinks.get(link);
+  assert.ok(spatial instanceof SpatialLink3D);
+  assert.strictEqual(link.__lineObj, spatial.group, "The engine uses one owned custom object for the connection");
+  const path = spatial.group.getObjectByName("gps-spatial-link-path");
+  const arrow = spatial.group.getObjectByName("gps-spatial-link-arrow");
+  assert.ok(path.isLine2, "The path uses the installed Three world-unit line renderer");
+  assert.ok(arrow instanceof THREE.Mesh);
+  assert.deepEqual(spatial.group.children, [path, arrow], "No duplicate stock cylinder or arrow is added");
+  return { spatial, path, arrow };
+}
+
+function sampledPoint(attribute, index) {
+  return new THREE.Vector3(attribute.getX(index), attribute.getY(index), attribute.getZ(index));
+}
+
+function effectivelyVisible(object) {
+  for (let current = object; current; current = current.parent) if (!current.visible) return false;
+  return true;
+}
+
+function ownedResources(group) {
+  const resources = [];
+  group.traverse(object => {
+    if (object.geometry) resources.push(object.geometry);
+    if (object.material) resources.push(...(Array.isArray(object.material) ? object.material : [object.material]));
+  });
+  assert.equal(resources.length, 4, "Each connection owns one path and one arrow geometry/material");
+  assert.equal(new Set(resources).size, 4);
+  return resources;
+}
+
+test("real 3D engine renders world-unit solid, dashed and round dotted spatial paths for straight and parallel curves", async () => {
+  await fixture(async f => {
+    await f.apply(projectGraphData(spatialSource(), true));
+    const data = f.engine.graphData();
+    const ordinary = data.links.filter(link => ["solid", "dashed", "dotted"].includes(link.type));
+    assert.equal(ordinary.length, 3);
+    const samples = [];
+    for (const link of ordinary) {
+      const { spatial, path, arrow } = spatialObjects(f, link);
+      const config = f.settings.linkTypes[link.type];
+      assert.equal(path.material.worldUnits, true);
+      assert.equal(path.material.linewidth, f.settings.linkThickness * config.widthMultiplier);
+      assert.equal(path.material.dashed, config.lineStyle !== "solid");
+      assert.equal(path.material.uniforms.gpsDotted.value, config.lineStyle === "dotted" ? 1 : 0);
+      assert.ok(path.material.dashSize > 0 && path.material.gapSize > 0);
+      assert.match(path.material.fragmentShader, /gpsLongitudinal.*gpsLongitudinal/,
+        "Dotted output clips radial and longitudinal distance into round spatial marks");
+      assert.equal(path.material.opacity, f.settings.linkOpacity * config.opacity);
+      assert.equal(arrow.material.opacity, path.material.opacity);
+      assert.equal(path.material.depthWrite, false);
+      assert.ok(!link.__arrowObj, "The stock force-graph arrow is disabled");
+      assert.deepEqual(spatial.group.position.toArray(), [0, 0, 0]);
+      assert.deepEqual(spatial.group.scale.toArray(), [1, 1, 1]);
+      const starts = path.geometry.getAttribute("instanceStart");
+      const ends = path.geometry.getAttribute("instanceEnd");
+      const distanceStarts = path.geometry.getAttribute("instanceDistanceStart");
+      const distanceEnds = path.geometry.getAttribute("instanceDistanceEnd");
+      assert.ok(starts.count > 2, "Curve sampling belongs to actual spatial geometry");
+      const from = new THREE.Vector3(link.source.x, link.source.y, link.source.z);
+      const to = new THREE.Vector3(link.target.x, link.target.y, link.target.z);
+      assert.ok(sampledPoint(starts, 0).distanceTo(from) < 1e-3);
+      assert.ok(sampledPoint(ends, ends.count - 1).distanceTo(to) < 1e-3);
+      const middleIndex = Math.floor(starts.count / 2);
+      const middle = sampledPoint(starts, middleIndex);
+      const expected = link.__curve ? link.__curve.getPoint(middleIndex / starts.count)
+        : from.clone().lerp(to, middleIndex / starts.count);
+      assert.ok(middle.distanceTo(expected) < 1e-3, "Custom path follows the real engine's 3D curve");
+      assert.equal(!!link.__curve, link.curvature !== 0);
+      let measuredLength = 0;
+      for (let index = 0; index < starts.count; index++) {
+        assert.ok(Math.abs(distanceStarts.getX(index) - measuredLength) < 1e-3);
+        measuredLength += sampledPoint(starts, index).distanceTo(sampledPoint(ends, index));
+        assert.ok(Math.abs(distanceEnds.getX(index) - measuredLength) < 1e-3);
+      }
+      if (link.__curve) assert.ok(measuredLength > from.distanceTo(to) + 0.01);
+      else assert.ok(Math.abs(measuredLength - from.distanceTo(to)) < 1e-3);
+      samples.push(middle);
+    }
+    assert.ok(samples[0].distanceTo(samples[1]) > 0.1);
+    assert.ok(samples[1].distanceTo(samples[2]) > 0.1, "Parallel semantic links have distinct spatial paths");
+    const { path: first } = spatialObjects(f, ordinary[0]);
+    const { path: second } = spatialObjects(f, ordinary[1]);
+    assert.notStrictEqual(first.material, second.material, "Same-color types retain independent opacity and style");
+  }, spatialSettings());
+});
+
+test("3D global-times-type opacity and inherit/on/off arrows preserve authored semantics, springs and quiet scene state", async () => {
+  await fixture(async f => {
+    const source = spatialSource();
+    const authoredJSON = JSON.stringify(source.semantic);
+    await f.apply(projectGraphData(source, true));
+    const data = f.engine.graphData();
+    const links = [...data.links], nodes = [...data.nodes];
+    data.nodes.forEach((node, index) => {
+      node.vx = index * 0.02; node.vy = -index * 0.03; node.vz = index * 0.04;
+    });
+    const pinned = data.nodes.find(node => node.id === "Bob.md");
+    pinned.fx = pinned.x; pinned.fy = pinned.y; pinned.fz = pinned.z;
+    const state = stateOf(nodes), camera = cameraOf(f), replacements = f.replacements(), reheats = f.reheats();
+    const objects = links.map(link => spatialObjects(f, link));
+    const force = f.engine.d3Force("link"), forceLinks = force.links();
+    const springValues = links.map(link => [force.strength()(link), force.distance()(link)]);
+    for (const link of links) {
+      const { arrow } = spatialObjects(f, link);
+      assert.equal(effectivelyVisible(arrow), link.type === "dashed", "Global off suppresses inheritance; explicit on remains ordinary only");
+    }
+    f.settings.showArrows = true;
+    await f.visual();
+    assert.equal(effectivelyVisible(spatialObjects(f, links.find(link => link.type === "solid")).arrow), true);
+    assert.equal(effectivelyVisible(spatialObjects(f, links.find(link => link.type === "dotted")).arrow), false);
+    assert.ok(links.filter(link => link.kind === "membership").every(link => !effectivelyVisible(spatialObjects(f, link).arrow)));
+    f.settings.linkTypes.dashed.opacity = 0;
+    f.settings.linkTypes.dotted.opacity = 0.75;
+    f.settings.linkTypes.dotted.lineStyle = "dashed";
+    f.settings.linkTypes.dotted.widthMultiplier = 2.5;
+    await f.visual();
+    const hidden = spatialObjects(f, links.find(link => link.type === "dashed"));
+    assert.equal(effectivelyVisible(hidden.path), false);
+    assert.equal(effectivelyVisible(hidden.arrow), false);
+    assert.equal(hidden.path.material.opacity, 0);
+    assert.equal(hidden.arrow.material.opacity, 0);
+    const solid = spatialObjects(f, links.find(link => link.type === "solid"));
+    assert.equal(solid.path.material.opacity, 0.4, "Changing a same-color type cannot leak material opacity");
+    const changed = spatialObjects(f, links.find(link => link.type === "dotted"));
+    assert.equal(changed.path.material.opacity, 0.4 * 0.75);
+    assert.equal(changed.path.material.linewidth, 1.8 * 2.5);
+    assert.equal(changed.path.material.uniforms.gpsDotted.value, 0);
+    f.settings.linkOpacity = 0;
+    await f.visual();
+    for (const link of links) {
+      const { path, arrow } = spatialObjects(f, link);
+      assert.equal(effectivelyVisible(path), false);
+      assert.equal(effectivelyVisible(arrow), false);
+      assert.equal(path.material.opacity, 0);
+      assert.equal(arrow.material.opacity, 0);
+    }
+    assert.strictEqual(f.engine.graphData(), data);
+    nodes.forEach((node, index) => assert.strictEqual(data.nodes[index], node));
+    links.forEach((link, index) => {
+      assert.strictEqual(data.links[index], link);
+      assert.strictEqual(spatialObjects(f, link).spatial, objects[index].spatial);
+    });
+    assert.strictEqual(force.links(), forceLinks);
+    assert.deepEqual(links.map(link => [force.strength()(link), force.distance()(link)]), springValues);
+    assert.deepEqual(stateOf(data.nodes), state);
+    assert.deepEqual(cameraOf(f), camera);
+    assert.equal(f.replacements(), replacements);
+    assert.equal(f.reheats(), reheats);
+    assert.equal(JSON.stringify(source.semantic), authoredJSON);
+    assert.deepEqual(f.renderer.getRelationDisplayCount(triad.id), { displayed: 3, total: 3 });
+    assert.equal(links.find(link => link.relationId === triad.id).memberCount, 3);
+  }, spatialSettings());
+});
+
+test("spatial helper reuses buffers, rejects hidden pointer targets, keeps zero-length arrows hidden, and disposes once", () => {
+  const appearance = { color: "#ff9900", width: 3, style: "dashed", opacity: 0.3,
+    showArrow: true, arrowLength: 12, targetRadius: 5 };
+  const spatial = new SpatialLink3D(appearance);
+  const path = spatial.group.getObjectByName("gps-spatial-link-path");
+  const arrow = spatial.group.getObjectByName("gps-spatial-link-arrow");
+  const resources = ownedResources(spatial.group);
+  const disposals = new Map(resources.map(resource => [resource, 0]));
+  resources.forEach(resource => resource.addEventListener("dispose", () => disposals.set(resource, disposals.get(resource) + 1)));
+  const attributes = ["instanceStart", "instanceEnd", "instanceDistanceStart", "instanceDistanceEnd"]
+    .map(name => [name, path.geometry.getAttribute(name), path.geometry.getAttribute(name).data.array]);
+  const dottedUniform = path.material.uniforms.gpsDotted;
+  const start = new THREE.Vector3(10, -15, 20), end = new THREE.Vector3(140, 45, 170);
+  const curve = new THREE.QuadraticBezierCurve3(start, new THREE.Vector3(70, 110, -25), end);
+  path.geometry.setPositions = () => { throw new Error("A position update reallocated path attributes"); };
+  path.computeLineDistances = () => { throw new Error("A position update allocated dash distances"); };
+  try {
+    spatial.updatePosition(start, end, {});
+    arrow.updateMatrix();
+    const tip = new THREE.Vector3(0, 1, 0).applyMatrix4(arrow.matrix);
+    const expectedTip = end.clone().addScaledVector(start.clone().sub(end).normalize(), appearance.targetRadius);
+    assert.ok(tip.distanceTo(expectedTip) < 1e-8, "The owned cone follows a real 3D direction and stops at the target radius");
+    spatial.group.updateMatrixWorld(true);
+    const pathNormal = end.clone().sub(start).cross(new THREE.Vector3(0, 1, 0)).normalize();
+    const pathRay = new THREE.Raycaster(start.clone().lerp(end, 0.5).addScaledVector(pathNormal, 20), pathNormal.clone().negate());
+    const arrowCenter = new THREE.Vector3(0, 0.5, 0).applyMatrix4(arrow.matrixWorld);
+    const arrowNormal = new THREE.Vector3(1, 0, 0).transformDirection(arrow.matrixWorld);
+    const arrowRay = new THREE.Raycaster(arrowCenter.clone().addScaledVector(arrowNormal, arrow.scale.x * 2), arrowNormal.clone().negate());
+    assert.ok(pathRay.intersectObject(path).length > 0, "A visible world-unit path remains pointer-accessible");
+    assert.ok(arrowRay.intersectObject(arrow).length > 0, "The real cone geometry provides a valid visible-arrow hit");
+    spatial.updateAppearance({ ...appearance, opacity: 0 });
+    assert.equal(pathRay.intersectObject(spatial.group, true).length, 0, "Zero opacity rejects path hits even though Three traverses invisible groups");
+    assert.equal(arrowRay.intersectObject(spatial.group, true).length, 0, "Zero opacity rejects arrow hits and ghost relationship tooltips");
+    spatial.updateAppearance({ ...appearance, showArrow: false });
+    assert.equal(arrowRay.intersectObject(arrow).length, 0, "An off arrow is not a pointer target");
+    assert.ok(pathRay.intersectObject(path).length > 0, "Disabling arrows preserves the visible connection's pointer target");
+    spatial.updateAppearance(appearance);
+    spatial.group.updateMatrixWorld(true);
+    assert.ok(arrowRay.intersectObject(arrow).length > 0, "Re-enabling arrows restores real cone hits");
+    for (const style of ["solid", "dashed", "dotted"]) {
+      spatial.updateAppearance({ ...appearance, style, width: 4, opacity: 0.6 });
+      for (let index = 0; index < 4; index++) {
+        curve.v1.z += 7;
+        spatial.updatePosition(start, end, { __curve: curve });
+        for (const [name, attribute, array] of attributes) {
+          assert.strictEqual(path.geometry.getAttribute(name), attribute);
+          assert.strictEqual(path.geometry.getAttribute(name).data.array, array);
+        }
+        assert.strictEqual(path.material.uniforms.gpsDotted, dottedUniform);
+        assert.equal(path.material.linewidth, 4);
+        assert.equal(path.material.dashed, style !== "solid");
+        assert.equal(dottedUniform.value, style === "dotted" ? 1 : 0);
+        assert.ok(effectivelyVisible(path));
+        assert.ok(effectivelyVisible(arrow));
+        assert.ok(arrow.position.toArray().every(Number.isFinite));
+        assert.deepEqual(ownedResources(spatial.group), resources);
+      }
+    }
+    const positionVersion = attributes[0][1].data.version;
+    const distanceVersion = attributes[2][1].data.version;
+    spatial.updatePosition(start, end, { __curve: new THREE.QuadraticBezierCurve3(curve.v0.clone(), curve.v1.clone(), curve.v2.clone()) });
+    assert.equal(attributes[0][1].data.version, positionVersion, "Equivalent force-graph curves do not upload unchanged positions");
+    assert.equal(attributes[2][1].data.version, distanceVersion, "A quiet path does not rebuild dash distances");
+    spatial.updatePosition(start, start, {});
+    assert.equal(effectivelyVisible(path), false);
+    assert.equal(effectivelyVisible(arrow), false);
+    assert.ok(attributes[0][2].every(Number.isFinite), "Coincident endpoints cannot put NaN in spatial buffers");
+    assert.ok(attributes[2][2].every(value => value === 0));
+  } finally {
+    spatial.dispose(); spatial.dispose();
+  }
+  assert.deepEqual([...disposals.values()], [1, 1, 1, 1]);
+  assert.equal(spatial.group.children.length, 0);
+});
+
+test("3D topology replacement and renderer teardown each dispose owned path and arrow resources exactly once", async () => {
+  await fixture(async f => {
+    const projected = projectGraphData(spatialSource(), true);
+    await f.apply(projected);
+    const old = [...f.renderer.spatialLinks.values()];
+    const resources = old.flatMap(spatial => ownedResources(spatial.group));
+    const disposals = new Map(resources.map(resource => [resource, 0]));
+    resources.forEach(resource => resource.addEventListener("dispose", () => disposals.set(resource, disposals.get(resource) + 1)));
+    await f.apply({ ...projected, links: [] });
+    assert.equal(f.renderer.spatialLinks.size, 0);
+    assert.ok(old.every(spatial => spatial.group.children.length === 0));
+    assert.ok([...disposals.values()].every(count => count === 1), "The engine's subsequent digest cannot dispose owned children twice");
+    await f.apply(projected);
+    const restoredResources = [...f.renderer.spatialLinks.values()].flatMap(spatial => ownedResources(spatial.group));
+    const teardown = new Map(restoredResources.map(resource => [resource, 0]));
+    restoredResources.forEach(resource => resource.addEventListener("dispose", () => teardown.set(resource, teardown.get(resource) + 1)));
+    // Scene-host destruction is outside this headless harness; production-owned
+    // link resources still pass through the real renderer's destroy method.
+    f.renderer.graph._destructor = () => {};
+    f.renderer.graph.pauseAnimation = () => {};
+    f.renderer.destroy();
+    f.renderer.destroy();
+    assert.equal(f.renderer.spatialLinks.size, 0);
+    assert.ok([...teardown.values()].every(count => count === 1));
+  }, spatialSettings());
 });
 
 test("3D semantic junctions use distinct labelled Three objects and real warmup produces noncoplanar tetra members", async (t) => {

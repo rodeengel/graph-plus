@@ -414,9 +414,7 @@ export class GraphLinkTypesView extends ItemView {
   private syncSidebarSettings(): void {
     const { available, reason } = this.getRegionAvailability();
     if (this.regionStatusEl) this.regionStatusEl.textContent = reason;
-    if (this.relationshipStyleStatusEl) this.relationshipStyleStatusEl.textContent = this.currentMode === "3d"
-      ? "3D junctions support color, width, arrows, distance and attraction. Per-type line patterns and opacity are unavailable in 3D in this slice; their controls apply to 2D. 3D styling and enclosures are the next slices."
-      : "Color, width, arrows, distance and attraction apply in both views. Per-type line patterns and opacity currently apply to 2D; 3D styling is the next slice.";
+    if (this.relationshipStyleStatusEl) this.relationshipStyleStatusEl.textContent = "Color, line patterns, width, opacity, arrows, distance and attraction apply in both views. In 3D, effective opacity is global Link opacity x type opacity; zero hides the connection and its arrows while retaining membership and springs. Unordered membership is always arrowless. Relationship regions remain available only in 2D.";
     for (const def of SETTING_DEFS) {
       const control = this.sidebarSettingControls.get(def.key);
       if (!control) continue;
@@ -628,10 +626,10 @@ export class GraphLinkTypesView extends ItemView {
         opacity.value = String(config.opacity);
         distance.value = String(config.distanceMultiplier);
         attraction.value = String(config.attraction);
-        style.disabled = this.currentMode === "3d";
-        opacity.disabled = this.currentMode === "3d";
-        style.title = "Per-type line patterns currently apply to 2D. 3D pattern rendering is planned in the next slice.";
-        opacity.title = "Per-type opacity currently applies to 2D. 3D per-type opacity is planned in the next slice.";
+        style.title = "Solid, dashed or dotted connections in both views, including spatial curves in 3D.";
+        opacity.title = this.currentMode === "3d"
+          ? "Global 3D Link opacity x type opacity. Zero hides connections and arrows while retaining membership and springs."
+          : "Per-type connection opacity. Zero hides connections and arrows while retaining membership and springs.";
       });
     }
   }
