@@ -55,6 +55,7 @@ export class GraphLinkTypesView extends ItemView {
   private selectedRelationId: string | null = null;
   private sidebarSettingControls = new Map<SettingDef["key"], { input: HTMLInputElement; valueDisplay?: HTMLElement }>();
   private regionStatusEl: HTMLElement | null = null;
+  private relationshipStyleStatusEl: HTMLElement | null = null;
   private sidebarRelationshipSync = new Map<string, () => void>();
   private sidebarForceSync = new Map<string, () => void>();
 
@@ -79,6 +80,10 @@ export class GraphLinkTypesView extends ItemView {
 
   getIcon(): string {
     return "graph-plus-semantic";
+  }
+
+  getCurrentMode(): "2d" | "3d" {
+    return this.currentMode;
   }
 
   getRegionAvailability(): { available: boolean; reason: string } {
@@ -205,6 +210,7 @@ export class GraphLinkTypesView extends ItemView {
     for (const [type, label] of this.linkCountEls) {
       label.textContent = `(${counts.get(type) ?? 0})`;
     }
+    this.syncSidebarSettings();
   }
 
   private buildFilterPanel(): void {
@@ -299,6 +305,7 @@ export class GraphLinkTypesView extends ItemView {
   private selectRelation(relation: ExplicitRelation): void {
     this.selectedRelationId = relation.id;
     this.renderer2D?.setSelectedRelation(relation.id);
+    this.renderer3D?.setSelectedRelation(relation.id);
     this.sidebarVisible = true;
     if (this.filterPanelEl) this.filterPanelEl.style.display = "";
     this.sectionOpen.set("Relations", true);
@@ -320,9 +327,11 @@ export class GraphLinkTypesView extends ItemView {
     if (invalidSelection) {
       this.selectedRelationId = null;
       this.renderer2D?.setSelectedRelation(null);
+      this.renderer3D?.setSelectedRelation(null);
     }
-    const count = selected && this.renderer2D ? this.renderer2D.getRelationDisplayCount(selected.id) : null;
-    const signature = JSON.stringify([relations, diagnostics, this.selectedRelationId, count, this.currentMode, this.settings.hypergraph2D]);
+    const renderer = this.currentMode === "3d" ? this.renderer3D : this.renderer2D;
+    const count = selected && renderer ? renderer.getRelationDisplayCount(selected.id) : null;
+    const signature = JSON.stringify([relations, diagnostics, this.selectedRelationId, count, this.currentMode, this.settings.hypergraph2D, this.settings.hypergraph3D]);
     if (signature === this.relationsSignature) return;
     this.relationsSignature = signature;
     const scrollTop = this.filterPanelEl?.scrollTop;
@@ -343,7 +352,7 @@ export class GraphLinkTypesView extends ItemView {
       details.createEl("div", { text: `Type: ${selected.type}` });
       details.createEl("div", { text: `Unordered membership (${selected.members.length})` });
       if (count) details.createEl("div", { text: `Displayed members: ${count.displayed} / ${count.total}` });
-      else details.createDiv({ cls: "gps-group-help", text: "Displayed-member counts are available in the 2D view." });
+      else details.createDiv({ cls: "gps-group-help", text: "Displayed-member counts will be available when the graph is ready." });
       const members = details.createEl("ul");
       for (const member of selected.members) members.createEl("li", { text: member });
       details.createEl("div", { text: `Source: ${selected.sourcePath}` });
@@ -353,9 +362,10 @@ export class GraphLinkTypesView extends ItemView {
       clear.addEventListener("click", () => {
         this.selectedRelationId = null;
         this.renderer2D?.setSelectedRelation(null);
+        this.renderer3D?.setSelectedRelation(null);
         this.refreshRelations();
       });
-      details.createDiv({ cls: "gps-group-help", text: "All authored members are listed. Regions approximate the displayed members; a node inside a region is not necessarily a member. Filters can hide members or the source junction and its region." });
+      details.createDiv({ cls: "gps-group-help", text: "All authored members are listed, including members hidden by filters. Highlighting follows direct authored membership. Regions are available only in 2D in this slice and approximate displayed membership; enclosure does not imply membership." });
     } else if (invalidSelection) {
       parent.createDiv({ cls: "gps-group-help", text: "The selected relation is no longer valid or present." });
     }
@@ -404,6 +414,9 @@ export class GraphLinkTypesView extends ItemView {
   private syncSidebarSettings(): void {
     const { available, reason } = this.getRegionAvailability();
     if (this.regionStatusEl) this.regionStatusEl.textContent = reason;
+    if (this.relationshipStyleStatusEl) this.relationshipStyleStatusEl.textContent = this.currentMode === "3d"
+      ? "3D junctions support color, width, arrows, distance and attraction. Per-type line patterns and opacity are unavailable in 3D in this slice; their controls apply to 2D. 3D styling and enclosures are the next slices."
+      : "Color, width, arrows, distance and attraction apply in both views. Per-type line patterns and opacity currently apply to 2D; 3D styling is the next slice.";
     for (const def of SETTING_DEFS) {
       const control = this.sidebarSettingControls.get(def.key);
       if (!control) continue;
@@ -438,13 +451,15 @@ export class GraphLinkTypesView extends ItemView {
         break;
       case "animate":
         if (this.renderer2D) this.renderer2D.setAnimate(this.settings.animate);
+        if (this.renderer3D) this.renderer3D.setAnimate(this.settings.animate);
         break;
     }
   }
 
   /** Keep an already-open graph and its sidebar in sync with the settings tab. */
   refreshSettings(effect: SettingEffect | "all" | "groups", renderers?: SettingDef["renderers"], key?: SettingDef["key"]): void {
-    if (key === "hyperrelationRegions" || key === "regionFillOpacity" || key === "hypergraph2D") this.syncSidebarSettings();
+    if (effect === "visual" || effect === "force" || effect === "animate"
+      || key === "hyperrelationRegions" || key === "regionFillOpacity" || key === "hypergraph2D" || key === "hypergraph3D") this.syncSidebarSettings();
     else this.buildFilterPanel();
     if (effect === "groups") {
       this.updateNodeGroups();
@@ -468,7 +483,7 @@ export class GraphLinkTypesView extends ItemView {
     this.sidebarRelationshipSync.clear();
     content.empty();
     const help = content.createDiv({ cls: "gps-group-help" });
-    help.setText("Appearance controls are 2D-first. Width, arrows, distance and attraction also affect 3D.");
+    this.relationshipStyleStatusEl = help;
 
     const counts = countLinkTypes(this.fullData);
     const types = Object.keys(this.settings.linkTypes).sort((a, b) => {
@@ -613,6 +628,10 @@ export class GraphLinkTypesView extends ItemView {
         opacity.value = String(config.opacity);
         distance.value = String(config.distanceMultiplier);
         attraction.value = String(config.attraction);
+        style.disabled = this.currentMode === "3d";
+        opacity.disabled = this.currentMode === "3d";
+        style.title = "Per-type line patterns currently apply to 2D. 3D pattern rendering is planned in the next slice.";
+        opacity.title = "Per-type opacity currently applies to 2D. 3D per-type opacity is planned in the next slice.";
       });
     }
   }
@@ -929,7 +948,7 @@ export class GraphLinkTypesView extends ItemView {
     const changed = (a: unknown, b: unknown) => JSON.stringify(a) !== JSON.stringify(b);
     const effects = SETTING_DEFS.filter((def) => changed(before[def.key], this.settings[def.key]));
     const groupsChanged = changed(before.nodeGroups, this.settings.nodeGroups);
-    let topologyChanged = effects.some((def) => def.effect === "rebuild")
+    let topologyChanged = effects.some((def) => def.effect === "rebuild" && (!def.renderers || def.renderers === "both" || def.renderers === this.currentMode))
       || before.showUntyped !== this.settings.showUntyped || before.searchQuery !== this.settings.searchQuery;
     let forcesChanged = effects.some((def) => def.effect === "force");
     let relationshipVisualsChanged = before.nodeColor !== this.settings.nodeColor || before.nodeColorHover !== this.settings.nodeColorHover;
@@ -958,7 +977,10 @@ export class GraphLinkTypesView extends ItemView {
     const visual3D = relationshipVisualsChanged || groupsChanged || effects.some((def) => def.effect === "visual" && def.renderers !== "2d");
     if (visual2D) this.renderer2D?.updateSettings();
     if (visual3D) this.renderer3D?.updateSettings();
-    if (effects.some((def) => def.effect === "animate")) this.renderer2D?.setAnimate(this.settings.animate);
+    if (effects.some((def) => def.effect === "animate")) {
+      this.renderer2D?.setAnimate(this.settings.animate);
+      this.renderer3D?.setAnimate(this.settings.animate);
+    }
     notifyRegionContextChange();
   }
 
@@ -978,8 +1000,10 @@ export class GraphLinkTypesView extends ItemView {
       this.renderer3D = new GraphRenderer3D(
         this.canvasContainerEl,
         this.app,
-        this.settings
+        this.settings,
+        (relation) => this.selectRelation(relation)
       );
+      if (this.selectedRelationId) this.renderer3D.setSelectedRelation(this.selectedRelationId);
     }
   }
 
@@ -989,8 +1013,8 @@ export class GraphLinkTypesView extends ItemView {
       this.renderer2D.updateData(filterGraphData(projected, this.settings, this.settings.searchQuery));
     }
     if ((renderers === "both" || renderers === "3d") && this.renderer3D) {
-      const standard = projectGraphData(this.fullData, false);
-      this.renderer3D.updateData(filterGraphData(standard, this.settings, this.settings.searchQuery));
+      const projected = projectGraphData(this.fullData, this.settings.hypergraph3D);
+      this.renderer3D.updateData(filterGraphData(projected, this.settings, this.settings.searchQuery));
     }
     this.refreshRelations();
   }

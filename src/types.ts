@@ -190,6 +190,7 @@ export interface GraphLinkTypesSettings {
   showLabels: boolean;
   showNodeLabels: boolean;
   hypergraph2D: boolean;
+  hypergraph3D: boolean;
   hyperrelationRegions: boolean;
   regionFillOpacity: number;
   showUntyped: boolean;
@@ -224,10 +225,11 @@ export const DEFAULT_SETTINGS: GraphLinkTypesSettings = {
   showLabels: false,
   showNodeLabels: true,
   hypergraph2D: true,
+  hypergraph3D: true,
   hyperrelationRegions: false,
   regionFillOpacity: 0.08,
   showUntyped: true,
-  defaultMode: "2d",
+  defaultMode: "3d",
   nodeSize: 5,
   chargeStrength: -120,
   centerForce: 1,
@@ -296,6 +298,7 @@ export const SETTING_DEFS: SettingDef[] = [
   { key: "edgeLabelThreshold", label: "Edge label zoom", desc: "Zoom level at which edge labels appear (0.1–5)", section: "display2d", type: "slider", min: 0.1, max: 5, step: 0.1, effect: "visual", renderers: "2d" },
 
   // 3D Display
+  { key: "hypergraph3D", label: "Relationship junctions", desc: "Show explicit multi-member relations as labelled junctions in 3D; disable for the standard note graph", section: "display3d", type: "toggle", effect: "rebuild", renderers: "3d" },
   { key: "nodeRelSize3D", label: "Node scale", desc: "Size of 3D node spheres (1–20)", section: "display3d", type: "slider", min: 1, max: 20, step: 1, effect: "visual", renderers: "3d" },
   { key: "nodeOpacity3D", label: "Node opacity", desc: "Opacity of 3D nodes (0–1)", section: "display3d", type: "slider", min: 0, max: 1, step: 0.05, effect: "visual", renderers: "3d" },
   { key: "linkOpacity", label: "Link opacity", desc: "Global opacity of 3D links (0–1)", section: "display3d", type: "slider", min: 0, max: 1, step: 0.05, effect: "visual", renderers: "3d" },
@@ -306,7 +309,7 @@ export const SETTING_DEFS: SettingDef[] = [
   { key: "linkStrength", label: "Base link force", desc: "Base link attraction before per-type attraction multipliers (0–2)", section: "forces", type: "slider", min: 0, max: 2, step: 0.05, effect: "force" },
   { key: "linkDistance", label: "Base link distance", desc: "Base preferred distance before per-type distance multipliers (5–500)", section: "forces", type: "slider", min: 5, max: 500, step: 5, effect: "force" },
   { key: "collisionForce", label: "Collision", desc: "Prevent node overlap (0–1)", section: "forces", type: "slider", min: 0, max: 1, step: 0.05, effect: "force" },
-  { key: "animate", label: "Pause physics", desc: "Freeze the force simulation", section: "forces", type: "toggle", effect: "animate", invert: true },
+  { key: "animate", label: "Pause physics", desc: "Pause the force simulation while camera navigation and inspection remain available", section: "forces", type: "toggle", effect: "animate", invert: true },
 ];
 
 export const COLOR_PALETTE = [

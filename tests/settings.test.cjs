@@ -109,7 +109,7 @@ const { GraphLinkTypesView, GraphLinkTypesSettingTab, VIEW_TYPE, DEFAULT_SETTING
 const copy = (value) => JSON.parse(JSON.stringify(value));
 global.document = { activeElement: null };
 function fixture(overrides = {}) {
-  const settings = { ...copy(DEFAULT_SETTINGS), linkTypes: { rel: createLinkTypeConfig("#e6194b") }, ...overrides };
+  const settings = { ...copy(DEFAULT_SETTINGS), defaultMode: "2d", linkTypes: { rel: createLinkTypeConfig("#e6194b") }, ...overrides };
   const files = [{ path: "A.md", basename: "A" }, { path: "B.md", basename: "B" }];
   const notes = { "A.md": "rel:: [[B]]", "B.md": "" };
   const leaves = [];
@@ -132,6 +132,7 @@ function fixture(overrides = {}) {
   const view = new GraphLinkTypesView({ app }, settings, () => plugin.saveSettings());
   const calls = [];
   const selections = [];
+  const selectionCalls = [];
   const renderer = (mode) => ({
     data: null,
     updateData(data) { this.data = data; calls.push({ mode, effect: "data", data }); },
@@ -139,7 +140,10 @@ function fixture(overrides = {}) {
     updateSettings() { calls.push({ mode, effect: "visual" }); },
     updateNodeGroups() { calls.push({ mode, effect: "groups" }); },
     setAnimate(running) { calls.push({ mode, effect: "animate", running }); },
-    setSelectedRelation(id) { selections.push(id); },
+    setSelectedRelation(id) {
+      selectionCalls.push({ mode, id });
+      if (view.currentMode === mode) selections.push(id);
+    },
     getRelationDisplayCount(id) {
       const relation = this.data?.semantic?.relations.find(relation => relation.id === id);
       if (!relation) return null;
@@ -155,14 +159,14 @@ function fixture(overrides = {}) {
   leaves.push({ view });
   const tab = new GraphLinkTypesSettingTab(app, plugin);
   tab.display();
-  function control(name, kind = "slider") {
-    const setting = tab.containerEl.settings.find((setting) => setting.name === name);
+  function control(name, kind = "slider", occurrence = 0) {
+    const setting = tab.containerEl.settings.filter((setting) => setting.name === name)[occurrence];
     assert.ok(setting, `Missing setting ${name}`);
     const result = setting.controls.find((control) => control.kind === kind);
     assert.ok(result, `Missing ${kind} control for ${name}`);
     return result;
   }
-  return { settings, view, tab, calls, control, saved, notes, files, caches, opened, selections, reads: () => reads, sidebarRefreshes: () => sidebarRefreshes };
+  return { settings, view, tab, calls, control, saved, notes, files, caches, opened, selections, selectionCalls, reads: () => reads, sidebarRefreshes: () => sidebarRefreshes };
 }
 
 function realSidebar(f) {
@@ -236,7 +240,7 @@ test("settings-tab relationship controls update open renderers without rereading
   assert.deepEqual(f.calls.map((call) => [call.mode, call.effect]), [["2d", "visual"], ["2d", "visual"]]);
   assert.equal(f.reads(), 0);
   assert.equal(f.saved.length, 4);
-  assert.equal(f.sidebarRefreshes(), 4);
+  assert.equal(f.sidebarRefreshes(), 0, "Appearance and force changes sync existing controls without rebuilding menus");
 });
 
 test("settings-tab filtering and schema effects refresh an already-open graph", async () => {
@@ -247,7 +251,7 @@ test("settings-tab filtering and schema effects refresh an already-open graph", 
   assert.ok(f.calls.every((call) => call.effect === "data" && call.data.links.length === 0));
   f.calls.length = 0;
   await f.control("Pause physics", "toggle").change(true);
-  assert.deepEqual(f.calls, [{ mode: "2d", effect: "animate", running: false }]);
+  assert.deepEqual(f.calls, [{ mode: "2d", effect: "animate", running: false }, { mode: "3d", effect: "animate", running: false }]);
   assert.equal(f.reads(), 2, "Settings changes reuse existing parsed graph data");
 });
 
@@ -360,8 +364,8 @@ test("settings-tab group changes recolor open renderers without resetting their 
   assert.deepEqual(f.settings.nodeGroups, [{ query: "file:B", color: "#abcdef" }]);
 });
 
-function relationFixture() {
-  const f = fixture();
+function relationFixture(overrides = {}) {
+  const f = fixture(overrides);
   f.files.push({ path: "C.md", basename: "C" }, { path: "Triad.md", basename: "Triad" });
   f.notes["C.md"] = "";
   f.notes["Triad.md"] = "[[A]] [[B]] [[C]]";
@@ -404,21 +408,27 @@ test("relation inspection retains full authored membership through filtering and
   assert.equal(panel.scrollTop, 200);
 });
 
-test("2D projection toggles route only to 2D while 3D keeps the standard note projection", async () => {
+test("independent projection toggles route only to their view and retain the standard note graph", async () => {
   const f = relationFixture();
   await f.view.rebuildGraph();
   const data2D = f.calls.find(call => call.mode === "2d" && call.effect === "data").data;
   const data3D = f.calls.find(call => call.mode === "3d" && call.effect === "data").data;
   assert.equal(data2D.nodes.filter(node => node.relation).length, 1);
   assert.ok(!data2D.nodes.some(node => node.id === "Triad.md"));
-  assert.ok(data3D.nodes.some(node => node.id === "Triad.md"));
-  assert.equal(data3D.nodes.filter(node => node.relation).length, 0);
+  assert.ok(!data3D.nodes.some(node => node.id === "Triad.md"));
+  assert.equal(data3D.nodes.filter(node => node.relation).length, 1);
   assert.equal(data3D.links.filter(link => link.kind === "membership").length, 3);
   f.calls.length = 0;
   await f.control("Relationship junctions", "toggle").change(false);
   assert.deepEqual(f.calls.map(call => [call.mode, call.effect]), [["2d", "data"]]);
   assert.ok(f.calls[0].data.nodes.some(node => node.id === "Triad.md"));
   assert.equal(f.reads(), 4, "Projection toggling does not reread source notes");
+  f.calls.length = 0;
+  await f.control("Relationship junctions", "toggle", 1).change(false);
+  assert.deepEqual(f.calls.map(call => [call.mode, call.effect]), [["3d", "data"]]);
+  assert.ok(f.calls[0].data.nodes.some(node => node.id === "Triad.md"));
+  assert.equal(f.calls[0].data.nodes.filter(node => node.relation).length, 0);
+  assert.equal(f.calls[0].data.links.filter(link => link.kind === "membership").length, 3);
   f.view.renderer2D = null;
   f.calls.length = 0;
   await f.control("Relationship junctions", "toggle").change(true);
@@ -429,6 +439,7 @@ test("profiles restore the projection toggle with relationship settings after a 
   const f = relationFixture();
   await f.view.rebuildGraph();
   f.settings.hypergraph2D = false;
+  f.settings.hypergraph3D = false;
   Object.assign(f.settings.linkTypes.alliance, { attraction: 0.3, distanceMultiplier: 1.8, lineStyle: "dotted" });
   const parent = new HostElement();
   f.view.buildProfileEditor(parent);
@@ -436,13 +447,16 @@ test("profiles restore the projection toggle with relationship settings after a 
   await parent.find(element => element.text === "Save").fire("click");
   const stored = copy(f.settings.profiles[0]);
   f.settings.hypergraph2D = true;
+  f.settings.hypergraph3D = true;
   Object.assign(f.settings.linkTypes.alliance, { attraction: 2, distanceMultiplier: 1, lineStyle: "solid" });
   await f.view.loadProfile(stored);
   assert.equal(f.settings.hypergraph2D, false);
+  assert.equal(f.settings.hypergraph3D, false);
   assert.equal(f.settings.linkTypes.alliance.attraction, 0.3);
   assert.equal(f.settings.linkTypes.alliance.distanceMultiplier, 1.8);
   assert.equal(f.settings.linkTypes.alliance.lineStyle, "dotted");
   assert.ok(f.calls.filter(call => call.mode === "2d" && call.effect === "data").at(-1).data.nodes.some(node => node.id === "Triad.md"));
+  assert.ok(f.calls.filter(call => call.mode === "3d" && call.effect === "data").at(-1).data.nodes.some(node => node.id === "Triad.md"));
 });
 
 function sidebarControl(panel, label) {
@@ -604,5 +618,150 @@ test("invalid relation metadata clears inspector and renderer selection until ex
   f.view.selectRelation(f.view.fullData.semantic.relations[0]);
   assert.deepEqual(f.selections, ["triad", null, "triad"]);
   assert.ok(section(panel, "Relations").content.find(element => element.cls === "gps-relation-details"));
+  f.tab.hide();
+});
+
+test("new installs prefer 3D junctions while a persisted 2D preference is honored", () => {
+  assert.equal(DEFAULT_SETTINGS.defaultMode, "3d");
+  assert.equal(DEFAULT_SETTINGS.hypergraph3D, true);
+  const f = fixture({ defaultMode: "2d", hypergraph3D: false });
+  assert.equal(f.view.getCurrentMode(), "2d");
+  assert.equal(f.settings.hypergraph3D, false);
+  f.tab.hide();
+});
+
+test("3D inspection uses the complete authored relation with filtered counts, source opening and clear selection", async () => {
+  const f = relationFixture({ defaultMode: "3d", animate: false });
+  f.view.renderer2D = null;
+  const panel = realSidebar(f);
+  await section(panel, "Relationship Types").header.fire("click");
+  panel.scrollTop = 220;
+  await f.view.rebuildGraph();
+  const relation = f.view.fullData.semantic.relations[0];
+  f.view.selectRelation(relation);
+  let details = section(panel, "Relations").content.find(element => element.cls === "gps-relation-details");
+  assert.ok(details.find(element => element.text === "Displayed members: 3 / 3"));
+  assert.deepEqual(f.selectionCalls, [{ mode: "3d", id: "triad" }]);
+  f.settings.searchQuery = "-file:C";
+  f.view.pushDataToRenderer();
+  details = section(panel, "Relations").content.find(element => element.cls === "gps-relation-details");
+  assert.ok(details.find(element => element.text === "Displayed members: 2 / 3"));
+  assert.deepEqual(details.find(element => element.tag === "ul").children.map(element => element.text), ["A.md", "B.md", "C.md"]);
+  assert.ok(details.find(element => element.text === "Type: alliance"));
+  assert.ok(details.find(element => element.text === "Source: Triad.md"));
+  await details.find(element => element.text === "Open source note").fire("click");
+  assert.deepEqual(f.opened, [["Triad.md", "", "tab"]]);
+  f.settings.searchQuery = "file:Triad";
+  f.view.pushDataToRenderer();
+  details = section(panel, "Relations").content.find(element => element.cls === "gps-relation-details");
+  assert.ok(details.find(element => element.text === "Displayed members: 0 / 3"));
+  assert.equal(section(panel, "Relationship Types").content.style.display, "none");
+  assert.equal(panel.scrollTop, 220);
+  await details.find(element => element.text === "Clear selection").fire("click");
+  assert.deepEqual(f.selectionCalls, [{ mode: "3d", id: "triad" }, { mode: "3d", id: null }]);
+  assert.ok(!section(panel, "Relations").content.find(element => element.cls === "gps-relation-details"));
+  f.tab.hide();
+});
+
+test("pause settings and sidebar controls reach the active 3D renderer without rebuilding data or menus", async () => {
+  const f = fixture({ defaultMode: "3d" });
+  f.view.renderer2D = null;
+  const panel = realSidebar(f);
+  const types = section(panel, "Relationship Types").content;
+  await section(panel, "Relationship Types").header.fire("click");
+  panel.scrollTop = 200;
+  const pause = sidebarControl(panel, "Pause physics");
+  await f.control("Pause physics", "toggle").change(true);
+  assert.equal(f.settings.animate, false);
+  assert.equal(pause.checked, true);
+  pause.checked = false;
+  await pause.fire("change");
+  assert.equal(f.settings.animate, true);
+  assert.equal(section(panel, "Relationship Types").content, types);
+  assert.equal(types.style.display, "none");
+  assert.equal(panel.scrollTop, 200);
+  assert.deepEqual(f.calls, [{ mode: "3d", effect: "animate", running: false }, { mode: "3d", effect: "animate", running: true }]);
+  assert.equal(f.reads(), 0);
+  f.tab.hide();
+});
+
+test("appearance-only 3D profiles survive JSON reload and keep paused data, inactive projection and editor objects intact", async () => {
+  const f = fixture({ defaultMode: "3d", animate: false, nodeGroups: [{ query: "file:A", color: "#112233" }] });
+  f.view.renderer2D = null;
+  Object.assign(f.settings.linkTypes.rel, { color: "#42d4f4", widthMultiplier: 2, arrowMode: "on" });
+  f.settings.linkOpacity = 0.4;
+  const profileEditor = new HostElement();
+  f.view.buildProfileEditor(profileEditor);
+  profileEditor.find(element => element.placeholder === "Profile name").value = "3D appearance";
+  await profileEditor.find(element => element.text === "Save").fire("click");
+  const stored = copy(f.saved.at(-1).profiles[0]);
+  assert.equal(stored.snapshot.hypergraph3D, true);
+  Object.assign(f.settings.linkTypes.rel, { color: "#ffffff", widthMultiplier: 1, arrowMode: "off" });
+  f.settings.linkOpacity = 1;
+  f.settings.hypergraph2D = false;
+  const panel = realSidebar(f);
+  const groups = f.settings.nodeGroups;
+  const content = section(panel, "Groups").content;
+  const query = content.find(element => element.className === "gps-group-query-input");
+  await section(panel, "Relationship Types").header.fire("click");
+  panel.scrollTop = 240;
+  await f.view.loadProfile(stored);
+  assert.equal(f.settings.hypergraph3D, true);
+  assert.equal(f.settings.hypergraph2D, true, "Inactive 2D preference restores without rebuilding the active 3D projection");
+  assert.equal(f.settings.linkTypes.rel.color, "#42d4f4");
+  assert.equal(f.settings.linkTypes.rel.widthMultiplier, 2);
+  assert.equal(f.settings.linkTypes.rel.arrowMode, "on");
+  assert.equal(f.settings.linkOpacity, 0.4);
+  assert.equal(f.settings.animate, false);
+  assert.equal(f.settings.nodeGroups, groups);
+  assert.equal(section(panel, "Groups").content, content);
+  assert.equal(content.find(element => element.className === "gps-group-query-input"), query);
+  assert.equal(section(panel, "Relationship Types").content.style.display, "none");
+  assert.equal(panel.scrollTop, 240);
+  assert.deepEqual(f.calls.map(call => [call.mode, call.effect]), [["3d", "visual"]]);
+  assert.equal(f.reads(), 0, "Appearance restoration neither rereads notes nor resets renderer data");
+  f.tab.hide();
+});
+
+test("3D-only contexts visibly disable pending per-type patterns and opacity while retaining supported controls", async () => {
+  const f = fixture({ defaultMode: "3d" });
+  const panel = realSidebar(f);
+  const grid = section(panel, "Relationship Types").content.find(element => element.cls === "gps-link-style-grid");
+  const pattern = grid.children.find(element => element.children.some(child => child.text === "Style")).find(element => element.tag === "select");
+  const opacity = grid.children.find(element => element.children.some(child => child.text === "Opacity")).find(element => element.tag === "input");
+  const width = grid.children.find(element => element.children.some(child => child.text === "Width ×")).find(element => element.tag === "input");
+  assert.equal(pattern.disabled, true);
+  assert.equal(opacity.disabled, true);
+  assert.notEqual(width.disabled, true);
+  assert.equal(f.control("rel: appearance", "dropdown").disabled, true);
+  assert.equal(f.control("rel: opacity").disabled, true);
+  assert.notEqual(f.control("rel: width").disabled, true);
+  assert.match(f.view.relationshipStyleStatusEl.textContent, /unavailable in 3D in this slice/);
+  f.view.initRenderer = () => {};
+  await f.view.modeBtnEl.fire("click");
+  assert.equal(pattern.disabled, false);
+  assert.equal(opacity.disabled, false);
+  assert.equal(f.control("rel: appearance", "dropdown").disabled, false);
+  assert.equal(f.control("rel: opacity").disabled, false);
+  f.tab.hide();
+});
+
+test("3D invalid metadata clears selection once and recovery requires explicit reselection", async () => {
+  const f = relationFixture({ defaultMode: "3d" });
+  f.view.renderer2D = null;
+  const panel = realSidebar(f);
+  await f.view.rebuildGraph();
+  f.view.selectRelation(f.view.fullData.semantic.relations[0]);
+  f.caches["Triad.md"].frontmatter.ordered = true;
+  await f.view.rebuildGraph();
+  f.view.refreshRelations();
+  assert.equal(f.view.selectedRelationId, null);
+  assert.deepEqual(f.selectionCalls, [{ mode: "3d", id: "triad" }, { mode: "3d", id: null }]);
+  f.caches["Triad.md"].frontmatter.ordered = false;
+  await f.view.rebuildGraph();
+  assert.equal(f.view.selectedRelationId, null);
+  assert.ok(!section(panel, "Relations").content.find(element => element.cls === "gps-relation-details"));
+  f.view.selectRelation(f.view.fullData.semantic.relations[0]);
+  assert.deepEqual(f.selectionCalls.at(-1), { mode: "3d", id: "triad" });
   f.tab.hide();
 });

@@ -191,7 +191,7 @@ test("3D group edits invalidate sphere and missing-node colors without replacing
     LineBasicMaterial: class { constructor(options) { Object.assign(this, options); } },
     LineSegments: class { constructor(geometry, material) { Object.assign(this, { geometry, material }); } },
   };
-  let data, replacements = 0;
+  let data = { nodes: [], links: [] }, replacements = 0;
   let colorAccessor = null, objectAccessor = renderer.nodeThreeObjectFn;
   const graph = {
     graphData(...args) {
@@ -203,6 +203,8 @@ test("3D group edits invalidate sphere and missing-node colors without replacing
       return data;
     },
     nodeColor(accessor) { colorAccessor = accessor; return graph; },
+    cooldownTicks() { return graph; },
+    warmupTicks() { return graph; },
     nodeThreeObject(accessor) {
       assert.notStrictEqual(accessor, objectAccessor, "Wireframe colors require a fresh accessor");
       objectAccessor = accessor;
@@ -460,9 +462,14 @@ test("3D standard graph retains relation notes and membership metadata without i
       Object.freeze({ source: members[0], target: members[1], type: relation.type, curvature: 0 }),
     ],
   };
-  let data, simulation;
-  renderer.graph = {
-    graphData(value) { data = value; },
+  let data = { nodes: [], links: [] }, simulation;
+  const graph = renderer.graph = {
+    graphData(...args) {
+      if (args.length) { data = args[0]; return graph; }
+      return data;
+    },
+    cooldownTicks() { return graph; },
+    warmupTicks() { return graph; },
     d3Force(name) { return simulation.force(name); },
   };
   renderer.applyData(input);

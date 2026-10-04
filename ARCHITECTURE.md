@@ -41,7 +41,7 @@ linkParser.buildGraphData()    Parse ordinary links + opt-in relation metadata
 GraphData { nodes, links, semantic }  Full standard graph + frozen semantic model
     |
     v
-semanticGraph.projectGraphData()     Junction 2D or standard note projection
+semanticGraph.projectGraphData()     Shared junction or standard note projection
     |
     v
 linkParser.filterGraphData()   Apply visibility, search, orphan filters
@@ -54,6 +54,8 @@ GraphRenderer2D / 3D           Renders to canvas / WebGL
 ```
 
 Relationship styling and physics are looked up by `link.type` in `settings.linkTypes`.
+
+3D is the primary presentation direction; 2D is an alternate view. Both renderers consume the same immutable relation records and shared projection. Future neighborhood/path calculations belong in this semantic layer once, with presentation in both renderers. Rendering positions, selection objects, labels, and region geometry remain outside the immutable model.
 
 Effective link spring strength multiplies the global base by per-type attraction, with a ceiling of 2 to prevent unstable D3 layouts at the upper ends of both sliders. Zero attraction remains zero.
 

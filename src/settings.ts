@@ -9,6 +9,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
   private regionStatusEl: HTMLElement | null = null;
   private regionControls = new Map<SettingDef["key"], { setDisabled(disabled: boolean): unknown }>();
   private unsubscribeRegionContext: (() => void) | null = null;
+  private pending3DStyleControls: Array<{ setDisabled(disabled: boolean): unknown }> = [];
 
   constructor(app: App, plugin: GraphPlusSemanticPlugin) {
     super(app, plugin);
@@ -36,6 +37,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
     this.unsubscribeRegionContext?.();
     this.unsubscribeRegionContext = onRegionContextChange(() => this.updateRegionAvailability());
     this.regionControls.clear();
+    this.pending3DStyleControls = [];
     this.regionStatusEl = null;
     containerEl.empty();
 
@@ -124,7 +126,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
     // --- Relationship type styling + physics ---
     new Setting(containerEl).setHeading().setName("Relationship types");
     containerEl.createEl("p", {
-      text: "Each typed link can have independent appearance and layout behavior. Line style and per-type opacity are currently 2D-only; width, arrows, distance and attraction also affect 3D.",
+      text: "Color, width, arrows, distance and attraction apply to 2D and 3D. Per-type line patterns and opacity currently apply only to 2D and are disabled when only a 3D graph is active. Full 3D styling and enclosures are subsequent slices.",
       cls: "setting-item-description",
     });
 
@@ -168,7 +170,8 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
       new Setting(containerEl)
         .setName(`${displayName}: appearance`)
         .setDesc("2D line pattern and per-type arrow behavior")
-        .addDropdown((dropdown) =>
+        .addDropdown((dropdown) => {
+          this.pending3DStyleControls.push(dropdown);
           dropdown
             .addOption("solid", "Solid")
             .addOption("dashed", "Dashed")
@@ -177,8 +180,8 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
             .onChange(async (value) => {
               config.lineStyle = value as LinkLineStyle;
               await this.saveSettings("visual", "2d");
-            })
-        )
+            });
+        })
         .addDropdown((dropdown) =>
           dropdown
             .addOption("inherit", "Arrow: inherit")
@@ -208,7 +211,8 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
       new Setting(containerEl)
         .setName(`${displayName}: opacity`)
         .setDesc("2D relationship opacity")
-        .addSlider((slider) =>
+        .addSlider((slider) => {
+          this.pending3DStyleControls.push(slider);
           slider
             .setLimits(0, 1, 0.05)
             .setValue(config.opacity)
@@ -216,8 +220,8 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
             .onChange(async (value) => {
               config.opacity = value;
               await this.saveSettings("visual", "2d");
-            })
-        );
+            });
+        });
 
       new Setting(containerEl)
         .setName(`${displayName}: distance`)
@@ -285,6 +289,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           this.display();
         })
     );
+    this.updateRegionAvailability();
   }
 
   hide(): void {
@@ -304,6 +309,8 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
     if (this.regionStatusEl) this.regionStatusEl.textContent = reason;
     this.regionControls.get("hyperrelationRegions")?.setDisabled(!available);
     this.regionControls.get("regionFillOpacity")?.setDisabled(!available || !this.plugin.settings.hyperrelationRegions);
+    const has2DContext = views.length ? views.some((view) => view.getCurrentMode() === "2d") : this.plugin.settings.defaultMode === "2d";
+    for (const control of this.pending3DStyleControls) control.setDisabled(!has2DContext);
   }
 
   /** Render all settings for a section from the declarative schema */
