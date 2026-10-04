@@ -1,6 +1,6 @@
-/* Graph Link Types plugin styles */
+/* Graph Plus Semantic plugin styles */
 
-.glt-container {
+.gps-container {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -10,7 +10,7 @@
 }
 
 /* Floating sidebar toggle — on body, above overlay sidebar */
-.glt-sidebar-toggle {
+.gps-sidebar-toggle {
   position: absolute;
   top: 6px;
   left: 6px;
@@ -32,19 +32,19 @@
   transition: opacity 0.15s, color 0.15s;
 }
 
-.glt-sidebar-toggle:hover {
+.gps-sidebar-toggle:hover {
   opacity: 1;
   color: var(--text-normal);
 }
 
 /* Sidebar buttons row */
-.glt-sidebar-buttons {
+.gps-sidebar-buttons {
   display: flex;
   gap: 4px;
   margin-bottom: 10px;
 }
 
-.glt-sidebar-btn {
+.gps-sidebar-btn {
   flex: 1;
   cursor: pointer;
   padding: 4px 8px;
@@ -56,11 +56,11 @@
   text-align: center;
 }
 
-.glt-sidebar-btn:hover {
+.gps-sidebar-btn:hover {
   background: var(--background-modifier-hover);
 }
 
-.glt-body {
+.gps-body {
   display: flex;
   flex: 1;
   min-height: 0;
@@ -68,12 +68,13 @@
 }
 
 /* Filter panel — overlay sidebar */
-.glt-filter-panel {
+.gps-filter-panel {
   position: absolute;
   left: 0;
   top: 0;
   bottom: 0;
-  width: 220px;
+  width: min(320px, 44vw);
+  min-width: 260px;
   z-index: 10;
   background: color-mix(in srgb, var(--background-primary) 65%, transparent);
   backdrop-filter: blur(12px);
@@ -84,7 +85,7 @@
   padding: 32px 8px 8px 8px;
 }
 
-.glt-filter-panel h4 {
+.gps-filter-panel h4 {
   margin: 0 0 8px 0;
   font-size: 0.85em;
   color: var(--text-muted);
@@ -92,7 +93,7 @@
   letter-spacing: 0.05em;
 }
 
-.glt-filter-item {
+.gps-filter-item {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -100,7 +101,7 @@
   font-size: 0.9em;
 }
 
-.glt-filter-item label {
+.gps-filter-item label {
   flex: 1;
   cursor: pointer;
   overflow: hidden;
@@ -108,20 +109,85 @@
   white-space: nowrap;
 }
 
-.glt-force-rule-row {
+/* Semantic relationship cards */
+.gps-link-type-card {
+  padding: 6px;
+  margin: 0 0 7px 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--background-primary) 82%, transparent);
+}
+
+.gps-link-type-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.gps-link-type-name {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9em;
+}
+
+.gps-link-style-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px 7px;
+}
+
+.gps-link-style-control {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gps-link-style-control > label {
+  font-size: 0.68em;
+  color: var(--text-faint);
+  line-height: 1.1;
+}
+
+.gps-link-style-control select,
+.gps-link-style-control input[type="number"] {
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  box-sizing: border-box;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 3px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 0.78em;
+  padding: 2px 4px;
+}
+
+.gps-link-style-control select:focus,
+.gps-link-style-control input[type="number"]:focus {
+  border-color: var(--interactive-accent);
+  outline: none;
+}
+
+.gps-force-rule-row {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 3px 0;
 }
 
-.glt-force-rule-label {
+.gps-force-rule-label {
   flex-shrink: 0;
   font-size: 0.85em;
   min-width: 50px;
 }
 
-.glt-force-rule-input {
+.gps-force-rule-input {
   flex: 1;
   min-width: 0;
   padding: 2px 6px;
@@ -133,13 +199,13 @@
   box-sizing: border-box;
 }
 
-.glt-force-rule-input::placeholder {
+.gps-force-rule-input::placeholder {
   color: var(--text-faint);
 }
 
-.glt-color-swatch {
-  width: 14px;
-  height: 14px;
+.gps-color-swatch {
+  width: 16px;
+  height: 16px;
   border-radius: 3px;
   border: 1px solid var(--background-modifier-border);
   cursor: pointer;
@@ -147,17 +213,17 @@
   padding: 0;
 }
 
-.glt-link-count {
+.gps-link-count {
   color: var(--text-muted);
   font-size: 0.8em;
   flex-shrink: 0;
 }
 
-.glt-filter-section {
+.gps-filter-section {
   margin-bottom: 12px;
 }
 
-.glt-toggle-row {
+.gps-toggle-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -165,7 +231,7 @@
 }
 
 /* Collapsible sections */
-.glt-collapsible-header {
+.gps-collapsible-header {
   display: flex;
   align-items: center;
   cursor: pointer;
@@ -178,23 +244,23 @@
   margin-bottom: 4px;
 }
 
-.glt-collapsible-header:hover {
+.gps-collapsible-header:hover {
   color: var(--text-normal);
 }
 
-.glt-chevron {
+.gps-chevron {
   font-size: 0.8em;
   width: 12px;
   text-align: center;
   flex-shrink: 0;
 }
 
-.glt-collapsible-content {
+.gps-collapsible-content {
   padding-left: 2px;
 }
 
 /* Search input */
-.glt-search-input {
+.gps-search-input {
   width: 100%;
   padding: 6px 8px;
   margin-bottom: 10px;
@@ -206,17 +272,17 @@
   box-sizing: border-box;
 }
 
-.glt-search-input::placeholder {
+.gps-search-input::placeholder {
   color: var(--text-faint);
 }
 
-.glt-search-input:focus {
+.gps-search-input:focus {
   border-color: var(--interactive-accent);
   outline: none;
 }
 
 /* Slider rows */
-.glt-slider-row {
+.gps-slider-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -225,12 +291,12 @@
   font-size: 0.9em;
 }
 
-.glt-slider-row > span:first-child {
+.gps-slider-row > span:first-child {
   flex-shrink: 0;
   white-space: nowrap;
 }
 
-.glt-slider-controls {
+.gps-slider-controls {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -238,12 +304,12 @@
   min-width: 0;
 }
 
-.glt-slider-controls input[type="range"] {
+.gps-slider-controls input[type="range"] {
   flex: 1;
   min-width: 0;
 }
 
-.glt-slider-value {
+.gps-slider-value {
   font-size: 0.8em;
   color: var(--text-muted);
   min-width: 28px;
@@ -252,7 +318,7 @@
 }
 
 /* Group editor */
-.glt-group-row {
+.gps-group-row {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -260,13 +326,13 @@
   flex-wrap: wrap;
 }
 
-.glt-group-help {
+.gps-group-help {
   font-size: 0.75em;
   color: var(--text-faint);
   margin-bottom: 6px;
 }
 
-.glt-group-query-input {
+.gps-group-query-input {
   flex: 1;
   min-width: 50px;
   padding: 3px 6px;
@@ -277,7 +343,7 @@
   font-size: 0.85em;
 }
 
-.glt-group-delete-btn {
+.gps-group-delete-btn {
   cursor: pointer;
   background: none;
   border: none;
@@ -287,11 +353,11 @@
   line-height: 1;
 }
 
-.glt-group-delete-btn:hover {
+.gps-group-delete-btn:hover {
   color: var(--text-error);
 }
 
-.glt-group-add-btn {
+.gps-group-add-btn {
   cursor: pointer;
   background: none;
   border: 1px dashed var(--background-modifier-border);
@@ -303,19 +369,19 @@
   width: 100%;
 }
 
-.glt-group-add-btn:hover {
+.gps-group-add-btn:hover {
   border-color: var(--interactive-accent);
   color: var(--text-normal);
 }
 
 /* Profile editor */
-.glt-profile-save-row {
+.gps-profile-save-row {
   display: flex;
   gap: 4px;
   margin-bottom: 8px;
 }
 
-.glt-profile-name-input {
+.gps-profile-name-input {
   flex: 1;
   min-width: 0;
   padding: 3px 6px;
@@ -326,14 +392,14 @@
   font-size: 0.85em;
 }
 
-.glt-profile-row {
+.gps-profile-row {
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 3px 0;
 }
 
-.glt-profile-name {
+.gps-profile-name {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -342,21 +408,21 @@
 }
 
 /* Canvas container */
-.glt-canvas-container {
+.gps-canvas-container {
   flex: 1;
   position: relative;
   min-width: 0;
   overflow: hidden;
 }
 
-.glt-canvas-container canvas {
+.gps-canvas-container canvas {
   display: block;
   width: 100%;
   height: 100%;
 }
 
 /* 3D container */
-.glt-3d-container {
+.gps-3d-container {
   flex: 1;
   position: relative;
   min-width: 0;
@@ -364,7 +430,7 @@
 }
 
 /* Node tooltip */
-.glt-tooltip {
+.gps-tooltip {
   position: absolute;
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
@@ -378,7 +444,7 @@
 }
 
 /* Context menu */
-.glt-context-menu {
+.gps-context-menu {
   position: absolute;
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
@@ -389,12 +455,12 @@
   min-width: 150px;
 }
 
-.glt-context-menu-item {
+.gps-context-menu-item {
   padding: 6px 14px;
   cursor: pointer;
   font-size: 0.9em;
 }
 
-.glt-context-menu-item:hover {
+.gps-context-menu-item:hover {
   background: var(--background-modifier-hover);
 }
