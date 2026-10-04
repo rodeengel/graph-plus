@@ -44,7 +44,8 @@ class HostControl {
   constructor(kind) { this.kind = kind; }
   addOption() { return this; }
   setValue(value) { this.value = value; return this; }
-  setLimits() { return this; }
+  setLimits(min, max, step) { this.limits = { min, max, step }; return this; }
+  setDisabled(value) { this.disabled = value; return this; }
   setDynamicTooltip() { return this; }
   setTooltip() { return this; }
   setPlaceholder() { return this; }
@@ -58,7 +59,7 @@ class HostSetting {
   constructor(container) { this.controls = []; container.settings.push(this); }
   setHeading() { return this; }
   setName(value) { this.name = value; return this; }
-  setDesc() { return this; }
+  setDesc(value) { this.description = value; return this; }
   add(kind, callback) {
     const control = new HostControl(kind);
     this.controls.push(control);
@@ -75,7 +76,7 @@ class HostSetting {
 
 const obsidianHost = {
   ItemView: class { constructor(leaf) { this.app = leaf.app; this.contentEl = new HostElement(); } },
-  PluginSettingTab: class { constructor(app) { this.app = app; this.containerEl = new HostElement(); } },
+  PluginSettingTab: class { constructor(app) { this.app = app; this.containerEl = new HostElement(); } hide() {} },
   Setting: HostSetting,
 };
 const projectRoot = path.resolve(__dirname, "..");
@@ -130,12 +131,22 @@ function fixture(overrides = {}) {
   const plugin = { settings, async saveSettings() { saved.push(copy(settings)); } };
   const view = new GraphLinkTypesView({ app }, settings, () => plugin.saveSettings());
   const calls = [];
+  const selections = [];
   const renderer = (mode) => ({
-    updateData(data) { calls.push({ mode, effect: "data", data }); },
+    data: null,
+    updateData(data) { this.data = data; calls.push({ mode, effect: "data", data }); },
     updateForces() { calls.push({ mode, effect: "force", charge: settings.chargeStrength, center: settings.centerForce }); },
     updateSettings() { calls.push({ mode, effect: "visual" }); },
     updateNodeGroups() { calls.push({ mode, effect: "groups" }); },
     setAnimate(running) { calls.push({ mode, effect: "animate", running }); },
+    setSelectedRelation(id) { selections.push(id); },
+    getRelationDisplayCount(id) {
+      const relation = this.data?.semantic?.relations.find(relation => relation.id === id);
+      if (!relation) return null;
+      const paths = new Set(this.data.nodes.map(node => node.relation?.sourcePath ?? node.id));
+      return { displayed: relation.members.filter(member => paths.has(member)).length, total: relation.members.length };
+    },
+    destroy() {},
   });
   view.renderer2D = renderer("2d");
   view.renderer3D = renderer("3d");
@@ -151,7 +162,7 @@ function fixture(overrides = {}) {
     assert.ok(result, `Missing ${kind} control for ${name}`);
     return result;
   }
-  return { settings, view, tab, calls, control, saved, notes, files, caches, opened, reads: () => reads, sidebarRefreshes: () => sidebarRefreshes };
+  return { settings, view, tab, calls, control, saved, notes, files, caches, opened, selections, reads: () => reads, sidebarRefreshes: () => sidebarRefreshes };
 }
 
 function realSidebar(f) {
@@ -432,4 +443,166 @@ test("profiles restore the projection toggle with relationship settings after a 
   assert.equal(f.settings.linkTypes.alliance.distanceMultiplier, 1.8);
   assert.equal(f.settings.linkTypes.alliance.lineStyle, "dotted");
   assert.ok(f.calls.filter(call => call.mode === "2d" && call.effect === "data").at(-1).data.nodes.some(node => node.id === "Triad.md"));
+});
+
+function sidebarControl(panel, label) {
+  const row = panel.find(element => (element.cls === "gps-toggle-row" || element.cls === "gps-slider-row")
+    && element.children.some(child => child.text === label));
+  assert.ok(row, `Missing sidebar control ${label}`);
+  return row.find(element => element.tag === "input");
+}
+
+test("region controls default off and redraw only 2D without replacing editors or opening menus", async () => {
+  const f = fixture({ nodeGroups: [{ query: "file:A", color: "#112233" }] });
+  const panel = realSidebar(f);
+  const groupContent = section(panel, "Groups").content;
+  const query = groupContent.find(element => element.className === "gps-group-query-input");
+  await section(panel, "Relationship Types").header.fire("click");
+  panel.scrollTop = 260;
+  assert.equal(f.settings.hyperrelationRegions, false);
+  assert.equal(f.settings.regionFillOpacity, 0.08);
+  assert.deepEqual(f.control("Region fill opacity").limits, { min: 0, max: 0.3, step: 0.01 });
+  const toggle = sidebarControl(panel, "Relationship regions");
+  const slider = sidebarControl(panel, "Region fill opacity");
+  assert.equal(toggle.disabled, false);
+  assert.equal(slider.disabled, true);
+  await f.control("Relationship regions", "toggle").change(true);
+  await f.control("Region fill opacity").change(0.12);
+  assert.equal(sidebarControl(panel, "Relationship regions"), toggle);
+  assert.equal(sidebarControl(panel, "Region fill opacity"), slider);
+  assert.equal(toggle.checked, true);
+  assert.equal(slider.value, "0.12");
+  assert.equal(slider.disabled, false);
+  assert.equal(groupContent.find(element => element.className === "gps-group-query-input"), query);
+  assert.equal(section(panel, "Relationship Types").content.style.display, "none");
+  assert.equal(section(panel, "2D Display").content.style.display, "none");
+  assert.equal(panel.scrollTop, 260);
+  toggle.checked = false;
+  await toggle.fire("change");
+  assert.equal(f.settings.hyperrelationRegions, false);
+  assert.equal(slider.disabled, true);
+  assert.deepEqual(f.calls.map(call => [call.mode, call.effect]), [["2d", "visual"], ["2d", "visual"], ["2d", "visual"]]);
+  assert.equal(f.reads(), 0);
+  assert.deepEqual(f.opened, []);
+  f.tab.hide();
+});
+
+test("region availability follows projection and mode in place in sidebar and open settings tab", async () => {
+  const f = fixture({ hyperrelationRegions: true });
+  const panel = realSidebar(f);
+  const toggle = sidebarControl(panel, "Relationship regions");
+  const slider = sidebarControl(panel, "Region fill opacity");
+  const status = f.view.regionStatusEl;
+  await f.control("Relationship junctions", "toggle").change(false);
+  assert.equal(toggle.disabled, true);
+  assert.equal(slider.disabled, true);
+  assert.match(status.textContent, /unavailable in the standard graph/);
+  assert.equal(f.control("Relationship regions", "toggle").disabled, true);
+  await f.control("Relationship junctions", "toggle").change(true);
+  assert.equal(toggle.disabled, false);
+  assert.equal(slider.disabled, false);
+  assert.equal(f.control("Relationship regions", "toggle").disabled, false);
+  f.view.initRenderer = () => {};
+  await f.view.modeBtnEl.fire("click");
+  assert.equal(f.view.currentMode, "3d");
+  assert.equal(sidebarControl(panel, "Relationship regions"), toggle);
+  assert.equal(f.view.regionStatusEl, status);
+  assert.match(status.textContent, /unavailable in 3D/);
+  assert.equal(toggle.disabled, true);
+  assert.equal(f.control("Relationship regions", "toggle").disabled, true);
+  assert.match(f.tab.regionStatusEl.textContent, /unavailable in 3D/);
+  await f.view.modeBtnEl.fire("click");
+  assert.equal(toggle.disabled, false);
+  assert.equal(f.control("Relationship regions", "toggle").disabled, false);
+  assert.equal(f.settings.hyperrelationRegions, true, "Availability does not erase the saved preference");
+  assert.equal(f.reads(), 0);
+  f.tab.hide();
+});
+
+test("region-only profiles survive JSON reload and preserve paused graph data and group editor closures", async () => {
+  const saved = fixture({ animate: false, hyperrelationRegions: true, regionFillOpacity: 0.14, nodeGroups: [{ query: "file:A", color: "#112233" }] });
+  const profileEditor = new HostElement();
+  saved.view.buildProfileEditor(profileEditor);
+  profileEditor.find(element => element.placeholder === "Profile name").value = "regions";
+  await profileEditor.find(element => element.text === "Save").fire("click");
+  const persisted = copy(saved.saved.at(-1));
+  assert.equal(persisted.profiles[0].snapshot.hyperrelationRegions, true);
+  assert.equal(persisted.profiles[0].snapshot.regionFillOpacity, 0.14);
+  const f = fixture({ ...persisted, hyperrelationRegions: false, regionFillOpacity: 0.08 });
+  const panel = realSidebar(f);
+  const groups = f.settings.nodeGroups;
+  const content = section(panel, "Groups").content;
+  const color = content.find(element => element.type === "color");
+  await section(panel, "Relationship Types").header.fire("click");
+  panel.scrollTop = 190;
+  await f.view.loadProfile(f.settings.profiles[0]);
+  assert.equal(f.settings.hyperrelationRegions, true);
+  assert.equal(f.settings.regionFillOpacity, 0.14);
+  assert.equal(f.settings.animate, false);
+  assert.equal(f.settings.nodeGroups, groups, "Equal groups retain the editor's captured array");
+  assert.equal(section(panel, "Groups").content, content);
+  assert.equal(section(panel, "Relationship Types").content.style.display, "none");
+  assert.equal(panel.scrollTop, 190);
+  assert.equal(sidebarControl(panel, "Region fill opacity").value, "0.14");
+  assert.equal(f.reads(), 0);
+  assert.deepEqual(f.calls.map(call => [call.mode, call.effect]), [["2d", "visual"]]);
+  color.value = "#abcdef";
+  await color.fire("input");
+  assert.equal(f.settings.nodeGroups[0].color, "#abcdef");
+  const legacy = { name: "old", snapshot: { showNodeLabels: false } };
+  await f.view.loadProfile(legacy);
+  assert.equal(f.settings.hyperrelationRegions, true, "Old profiles leave absent region fields unchanged");
+  assert.equal(f.settings.regionFillOpacity, 0.14);
+  f.tab.hide();
+  saved.tab.hide();
+});
+
+test("relation selection reports filtered member counts including zero and keeps the complete authored list", async () => {
+  const f = relationFixture();
+  const panel = realSidebar(f);
+  await section(panel, "Relationship Types").header.fire("click");
+  await f.view.rebuildGraph();
+  const relation = f.view.fullData.semantic.relations[0];
+  f.view.selectRelation(relation);
+  assert.deepEqual(f.selections, ["triad"]);
+  let details = section(panel, "Relations").content.find(element => element.cls === "gps-relation-details");
+  assert.ok(details.find(element => element.text === "Displayed members: 3 / 3"));
+  f.settings.searchQuery = "file:A";
+  f.view.pushDataToRenderer();
+  details = section(panel, "Relations").content.find(element => element.cls === "gps-relation-details");
+  assert.ok(details.find(element => element.text === "Displayed members: 1 / 3"));
+  assert.deepEqual(details.find(element => element.tag === "ul").children.map(element => element.text), ["A.md", "B.md", "C.md"]);
+  f.settings.searchQuery = "file:Triad";
+  f.view.pushDataToRenderer();
+  details = section(panel, "Relations").content.find(element => element.cls === "gps-relation-details");
+  assert.ok(details.find(element => element.text === "Displayed members: 0 / 3"));
+  assert.equal(section(panel, "Relationship Types").content.style.display, "none");
+  await details.find(element => element.text === "Clear selection").fire("click");
+  assert.deepEqual(f.selections, ["triad", null]);
+  assert.deepEqual(f.opened, []);
+  f.tab.hide();
+});
+
+test("invalid relation metadata clears inspector and renderer selection until explicitly selected again", async () => {
+  const f = relationFixture();
+  const panel = realSidebar(f);
+  await f.view.rebuildGraph();
+  f.view.selectRelation(f.view.fullData.semantic.relations[0]);
+  f.caches["Triad.md"].frontmatter.ordered = true;
+  await f.view.rebuildGraph();
+  assert.equal(f.view.selectedRelationId, null);
+  assert.deepEqual(f.selections, ["triad", null]);
+  assert.equal(section(panel, "Relations").content.find(element => element.cls === "gps-relation-details"), undefined);
+  f.view.refreshRelations();
+  assert.deepEqual(f.selections, ["triad", null], "An invalid selection is cleared only once");
+  f.caches["Triad.md"].frontmatter.ordered = false;
+  await f.view.rebuildGraph();
+  assert.equal(f.view.fullData.semantic.relations.length, 1);
+  assert.equal(f.view.selectedRelationId, null);
+  assert.equal(section(panel, "Relations").content.find(element => element.cls === "gps-relation-details"), undefined);
+  assert.deepEqual(f.selections, ["triad", null], "Validity recovery does not silently select the relation");
+  f.view.selectRelation(f.view.fullData.semantic.relations[0]);
+  assert.deepEqual(f.selections, ["triad", null, "triad"]);
+  assert.ok(section(panel, "Relations").content.find(element => element.cls === "gps-relation-details"));
+  f.tab.hide();
 });

@@ -23,6 +23,9 @@ import type {
 } from "./types";
 import { UNTYPED_LINK_KEY, parseForceRules, getEffectiveLinkStrength, getMembershipLinkStrength, type ForceRule } from "./types";
 import { applyNodeGroups } from "./linkParser";
+import { buildRelationRegionGeometry, type RegionGeometry } from "./relationRegions";
+
+type DisplayMemberIndex = { byId: Map<string, GraphNode>; bySource: Map<string, GraphNode> };
 
 export class GraphRenderer2D {
   private container: HTMLElement;
@@ -35,6 +38,8 @@ export class GraphRenderer2D {
   private app: App;
   private onSelectRelation?: (relation: ExplicitRelation) => void;
   private topologyKey = "";
+  private relations: readonly ExplicitRelation[] = [];
+  private selectedRelationId: string | null = null;
 
   private zoomBehavior: ZoomBehavior<HTMLCanvasElement, unknown>;
   private transform = zoomIdentity;
@@ -143,6 +148,9 @@ export class GraphRenderer2D {
   }
 
   updateData(data: GraphData): void {
+    // Filtering and simulation never reduce the authored membership record.
+    // Refresh it even when the displayed topology has not changed.
+    this.relations = data.semantic?.relations ?? data.nodes.flatMap((node) => node.relation ? [node.relation] : []);
     const endpointId = (endpoint: string | GraphNode): string =>
       typeof endpoint === "string" ? endpoint : endpoint.id;
     const topologyKey = JSON.stringify([
@@ -231,6 +239,93 @@ export class GraphRenderer2D {
   /** Update visual display settings without reheating physics */
   updateSettings(): void {
     this.render();
+  }
+
+  /** Relationship selection is presentation state, independent of layout. */
+  setSelectedRelation(id: string | null): void {
+    this.selectedRelationId = id;
+    this.render();
+  }
+
+  getDisplayedMemberIds(relation: ExplicitRelation): string[] {
+    return this.getDisplayedMembers(relation).map((node) => node.id);
+  }
+
+  getRelationDisplayCount(id: string): { displayed: number; total: number } | null {
+    const relation = this.getExplicitRelations().find((record) => record.id === id);
+    return relation ? { displayed: this.getDisplayedMemberIds(relation).length, total: relation.members.length } : null;
+  }
+
+  private getExplicitRelations(): readonly ExplicitRelation[] {
+    return this.relations ?? this.nodes.flatMap((node) => node.relation ? [node.relation] : []);
+  }
+
+  private createMemberIndex(): DisplayMemberIndex {
+    return {
+      byId: new Map(this.nodes.map((node) => [node.id, node])),
+      bySource: new Map(this.nodes.map((node) => [node.relation?.sourcePath ?? node.id, node])),
+    };
+  }
+
+  private getDisplayedMembers(relation: ExplicitRelation, index = this.createMemberIndex()): GraphNode[] {
+    const members: GraphNode[] = [];
+    const seen = new Set<string>();
+    for (const id of relation.members) {
+      const node = index.byId.get(id) ?? index.bySource.get(id);
+      if (node && !seen.has(node.id)) {
+        seen.add(node.id);
+        members.push(node);
+      }
+    }
+    return members;
+  }
+
+  private getRelationRegions(memberIndex?: DisplayMemberIndex): { relation: ExplicitRelation; members: GraphNode[]; geometry: RegionGeometry }[] {
+    if (!this.settings.hypergraph2D || !this.settings.hyperrelationRegions) return [];
+    const index = memberIndex ?? this.createMemberIndex();
+    const visibleJunctions = new Set(this.nodes.flatMap((node) => node.relation ? [node.relation.id] : []));
+    const regions = [];
+    for (const relation of this.getExplicitRelations()) {
+      // A filtered source junction has no region; regions cannot bypass the
+      // existing source-note or relationship-type filters.
+      if (!visibleJunctions.has(relation.id) || this.settings.linkTypes[relation.type]?.visible === false) continue;
+      const members = this.getDisplayedMembers(relation, index);
+      const geometry = buildRelationRegionGeometry(members
+        .filter((node) => Number.isFinite(node.x) && Number.isFinite(node.y))
+        .map((node) => ({ x: node.x!, y: node.y!, radius: this.getNodeRadius(node) })));
+      if (geometry) regions.push({ relation, members, geometry });
+    }
+    // Keep a selected border legible when same-color regions overlap.
+    return regions.sort((a, b) => Number(a.relation.id === this.selectedRelationId) - Number(b.relation.id === this.selectedRelationId));
+  }
+
+  private drawRelationRegions(regions: { relation: ExplicitRelation; members: GraphNode[]; geometry: RegionGeometry }[]): void {
+    const ctx = this.ctx;
+    const scale = this.transform.k;
+    const opacity = Number.isFinite(this.settings.regionFillOpacity)
+      ? Math.max(0, Math.min(0.3, this.settings.regionFillOpacity)) : 0.08;
+    for (const { relation, geometry } of regions) {
+      const selected = relation.id === this.selectedRelationId;
+      const color = this.settings.linkTypes[relation.type]?.color ?? "#888";
+      ctx.save();
+      ctx.beginPath();
+      geometry.vertices.forEach((point, index) => {
+        if (index === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
+      });
+      ctx.closePath();
+      ctx.setLineDash([]);
+      ctx.fillStyle = color;
+      ctx.globalAlpha = opacity;
+      ctx.fill();
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = selected ? 0.9 : 0.4;
+      ctx.lineWidth = (selected ? 2.4 : 1.2) / scale;
+      ctx.stroke();
+      // Identity and partial counts stay on the always-labelled junction.
+      // Boundary text would compete with shared members and other junctions.
+      ctx.restore();
+    }
   }
 
   /** Recolor the current nodes without replacing data or reheating physics. */
@@ -426,6 +521,17 @@ export class GraphRenderer2D {
     ctx.translate(t.x, t.y);
     ctx.scale(t.k, t.k);
 
+    // Authored regions follow current positions and remain below all graph
+    // links, entities and their labels. They add no hit-testing surface.
+    const regionPresentation = this.settings.hypergraph2D && this.settings.hyperrelationRegions;
+    const memberIndex = regionPresentation ? this.createMemberIndex() : undefined;
+    const relationById = new Map<string, ExplicitRelation>(regionPresentation ? this.getExplicitRelations().map((record) => [record.id, record]) : []);
+    const regions = regionPresentation ? this.getRelationRegions(memberIndex) : [];
+    this.drawRelationRegions(regions);
+    const selectedRelation = this.selectedRelationId ? relationById.get(this.selectedRelationId) : undefined;
+    const selectedMembers = new Set(selectedRelation && this.settings.linkTypes[selectedRelation.type]?.visible !== false
+      ? this.getDisplayedMembers(selectedRelation, memberIndex).map((node) => node.id) : []);
+
     const showLabels = this.settings.showLabels;
     const showNodeLabels = this.settings.showNodeLabels;
     const textFadeThreshold = this.settings.textFadeThreshold;
@@ -597,6 +703,26 @@ export class GraphRenderer2D {
         ctx.stroke();
       }
 
+      if (selectedMembers.has(node.id) && selectedRelation) {
+        const outlineRadius = radius + 3 / t.k;
+        ctx.beginPath();
+        if (node.relation) {
+          ctx.moveTo(node.x, node.y - outlineRadius);
+          ctx.lineTo(node.x + outlineRadius, node.y);
+          ctx.lineTo(node.x, node.y + outlineRadius);
+          ctx.lineTo(node.x - outlineRadius, node.y);
+          ctx.closePath();
+        } else {
+          ctx.arc(node.x, node.y, outlineRadius, 0, Math.PI * 2);
+        }
+        ctx.globalAlpha = 1;
+        ctx.setLineDash([]);
+        ctx.strokeStyle = this.settings.linkTypes[selectedRelation.type]?.color ?? "#888";
+        ctx.lineWidth = 2.4 / t.k;
+        ctx.stroke();
+        ctx.globalAlpha = alpha;
+      }
+
       // Node label: always on hover; when showNodeLabels is on, also at zoom > threshold
       const showLabel = !!node.relation || isHovered || (showNodeLabels && t.k > textFadeThreshold);
       if (showLabel && node.name) {
@@ -606,7 +732,12 @@ export class GraphRenderer2D {
         ctx.lineJoin = "round";
         ctx.lineWidth = 3 * fs;
         ctx.strokeStyle = this.resolvedBgColor;
-        const label = node.relation ? `${node.relation.sourceName} [${node.relation.id}]` : node.name;
+        let label = node.relation ? `${node.relation.sourceName} [${node.relation.id}]` : node.name;
+        if (node.relation && regionPresentation) {
+          const relation = relationById.get(node.relation.id) ?? node.relation;
+          const displayed = this.getDisplayedMembers(relation, memberIndex).length;
+          if (displayed < relation.members.length) label += ` · ${displayed}/${relation.members.length} shown (partial)`;
+        }
         ctx.strokeText(label, node.x, node.y - radius - 4);
         ctx.fillStyle = this.resolvedTextColor;
         ctx.fillText(label, node.x, node.y - radius - 4);

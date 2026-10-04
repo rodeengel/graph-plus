@@ -2,10 +2,13 @@ import { App, PluginSettingTab, Setting } from "obsidian";
 import type GraphPlusSemanticPlugin from "./main";
 import type { LinkArrowMode, LinkLineStyle, SettingDef, SettingEffect } from "./types";
 import { COLOR_PALETTE, UNTYPED_LINK_KEY, SETTING_DEFS, DEFAULT_LINK_TYPE_STYLE } from "./types";
-import { GraphLinkTypesView, VIEW_TYPE } from "./graphView";
+import { GraphLinkTypesView, VIEW_TYPE, onRegionContextChange } from "./graphView";
 
 export class GraphLinkTypesSettingTab extends PluginSettingTab {
   plugin: GraphPlusSemanticPlugin;
+  private regionStatusEl: HTMLElement | null = null;
+  private regionControls = new Map<SettingDef["key"], { setDisabled(disabled: boolean): unknown }>();
+  private unsubscribeRegionContext: (() => void) | null = null;
 
   constructor(app: App, plugin: GraphPlusSemanticPlugin) {
     super(app, plugin);
@@ -14,19 +17,26 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
 
   private async saveSettings(
     effect?: SettingEffect | "all" | "groups",
-    renderers?: SettingDef["renderers"]
+    renderers?: SettingDef["renderers"],
+    key?: SettingDef["key"]
   ): Promise<void> {
     await this.plugin.saveSettings();
-    if (!effect) return;
-    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
-      if (leaf.view instanceof GraphLinkTypesView) {
-        leaf.view.refreshSettings(effect, renderers);
+    if (effect) {
+      for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+        if (leaf.view instanceof GraphLinkTypesView) {
+          leaf.view.refreshSettings(effect, renderers, key);
+        }
       }
     }
+    this.updateRegionAvailability();
   }
 
   display(): void {
     const { containerEl } = this;
+    this.unsubscribeRegionContext?.();
+    this.unsubscribeRegionContext = onRegionContextChange(() => this.updateRegionAvailability());
+    this.regionControls.clear();
+    this.regionStatusEl = null;
     containerEl.empty();
 
     new Setting(containerEl).setHeading().setName("Graph Plus Semantic");
@@ -89,6 +99,8 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).setHeading().setName("2D display");
     this.renderSettingsSection(containerEl, "display2d");
+    this.regionStatusEl = containerEl.createDiv({ cls: "setting-item-description" });
+    this.updateRegionAvailability();
 
     new Setting(containerEl).setHeading().setName("3D display");
     this.renderSettingsSection(containerEl, "display3d");
@@ -275,6 +287,25 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
     );
   }
 
+  hide(): void {
+    this.unsubscribeRegionContext?.();
+    this.unsubscribeRegionContext = null;
+    super.hide();
+  }
+
+  private updateRegionAvailability(): void {
+    const views = this.app.workspace.getLeavesOfType(VIEW_TYPE)
+      .map((leaf) => leaf.view).filter((view): view is GraphLinkTypesView => view instanceof GraphLinkTypesView);
+    const contexts = views.map((view) => view.getRegionAvailability());
+    const available = this.plugin.settings.hypergraph2D && (contexts.length ? contexts.some((context) => context.available) : this.plugin.settings.defaultMode === "2d");
+    const reason = available
+      ? (contexts.length ? "Relationship regions are available in the open 2D junction graph." : "Relationship regions will be available when opening the default 2D junction graph.")
+      : (!this.plugin.settings.hypergraph2D ? "Relationship regions are unavailable in the standard graph. Enable Relationship junctions." : "Relationship regions are unavailable in 3D. Open or switch a graph to 2D.");
+    if (this.regionStatusEl) this.regionStatusEl.textContent = reason;
+    this.regionControls.get("hyperrelationRegions")?.setDisabled(!available);
+    this.regionControls.get("regionFillOpacity")?.setDisabled(!available || !this.plugin.settings.hyperrelationRegions);
+  }
+
   /** Render all settings for a section from the declarative schema */
   private renderSettingsSection(containerEl: HTMLElement, section: string): void {
     const defs = SETTING_DEFS.filter((d) => d.section === section);
@@ -284,27 +315,29 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
         new Setting(containerEl)
           .setName(def.label)
           .setDesc(def.desc ?? "")
-          .addToggle((toggle) =>
+          .addToggle((toggle) => {
+            if (def.key === "hyperrelationRegions") this.regionControls.set(def.key, toggle);
             toggle.setValue(def.invert ? !raw : raw).onChange(async (value) => {
               (this.plugin.settings as any)[def.key] = def.invert ? !value : value;
-              await this.saveSettings(def.effect, def.renderers);
-            })
-          );
+              await this.saveSettings(def.effect, def.renderers, def.key);
+            });
+          });
       } else if (def.type === "slider") {
         const raw = this.plugin.settings[def.key] as number;
         new Setting(containerEl)
           .setName(def.label)
           .setDesc(def.desc ?? "")
-          .addSlider((slider) =>
+          .addSlider((slider) => {
+            if (def.key === "regionFillOpacity") this.regionControls.set(def.key, slider);
             slider
               .setLimits(def.min!, def.max!, def.step!)
               .setValue(def.invert ? Math.abs(raw) : raw)
               .setDynamicTooltip()
               .onChange(async (value) => {
                 (this.plugin.settings as any)[def.key] = def.invert ? -value : value;
-                await this.saveSettings(def.effect, def.renderers);
-              })
-          );
+                await this.saveSettings(def.effect, def.renderers, def.key);
+              });
+          });
       }
     }
   }

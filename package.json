@@ -1,6 +1,6 @@
 {
   "name": "graph-plus-semantic",
-  "version": "0.2.0-semantic.2a.1",
+  "version": "0.2.0-semantic.2b",
   "description": "Obsidian semantic graph with typed relationship appearance and physics",
   "main": "main.js",
   "scripts": {

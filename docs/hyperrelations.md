@@ -65,4 +65,4 @@ Copy these fixtures into an isolated vault and install the production package th
 
 Source tests cover semantic independence, parsing/diagnostics, both projections, Canvas draw commands, bounded membership springs, selection, metadata/topology preservation, settings routing, and profile JSON restoration using host stubs. They do not establish native Obsidian loading, actual Canvas/WebGL output, pointer behavior, or user acceptance. The closeout report records those observations separately.
 
-Shaded-region rendering, centrality, node importance, multiway evolution, rewrite rules, and Wolfram|Alpha integration remain subsequent work.
+Optional shaded regions are described in [Milestone 2B](regions2d.md). Centrality, node importance, multiway evolution, rewrite rules, and Wolfram|Alpha integration remain subsequent work.
