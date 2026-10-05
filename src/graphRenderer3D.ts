@@ -3,6 +3,7 @@ import type { ForceGraph3DInstance } from "3d-force-graph";
 import type { GraphNode, GraphLink, GraphData, GraphLinkTypesSettings, ExplicitRelation } from "./types";
 import { UNTYPED_LINK_KEY, parseForceRules, getEffectiveLinkStrength, getMembershipLinkStrength, type ForceRule } from "./types";
 import { applyNodeGroups } from "./linkParser";
+import { clampOpacity, getAppearanceColor } from "./appearance";
 import { forceX, forceY } from "d3-force";
 // @ts-expect-error — d3-force-3d does not ship TypeScript declarations.
 import { forceZ } from "d3-force-3d";
@@ -34,6 +35,10 @@ export class GraphRenderer3D {
   private spatialLinks = new Map<any, SpatialLink3D>();
   private SpatialEnclosure: typeof SpatialEnclosure3D | null = null;
   private spatialEnclosures = new Map<string, SpatialEnclosure3D>();
+  private nodeAppearanceColors = new Map<string, string>();
+  private relationAppearanceColors = new Map<string, string>();
+  private nodeBrightnessCache = 1;
+  private relationBrightnessCache = 1;
 
   private onMiddlePointerDown = (event: PointerEvent): void => this.startMiddleClick(event);
   private onMiddlePointerMove = (event: PointerEvent): void => this.moveMiddleClick(event);
@@ -77,6 +82,84 @@ export class GraphRenderer3D {
     return base * s * s * s;
   }
 
+  private getBodyColor(color: string, relation = false): string {
+    const raw = relation ? this.settings.relationBrightness : this.settings.nodeBrightness;
+    const brightness = Number.isFinite(raw) ? Math.max(0, Math.min(2, raw)) : 1;
+    if (brightness === 1) return color;
+    const colors = relation
+      ? (this.relationAppearanceColors ??= new Map<string, string>())
+      : (this.nodeAppearanceColors ??= new Map<string, string>());
+    const cachedBrightness = relation ? this.relationBrightnessCache : this.nodeBrightnessCache;
+    if (cachedBrightness !== brightness) {
+      colors.clear();
+      if (relation) this.relationBrightnessCache = brightness;
+      else this.nodeBrightnessCache = brightness;
+    }
+    let derived = colors.get(color);
+    if (derived === undefined) {
+      derived = getAppearanceColor(color, brightness);
+      colors.set(color, derived);
+    }
+    return derived;
+  }
+
+  private getNodeBodyColor(node: any): string {
+    const color = node.relation ? this.getRelationColor(node.relation) : node.groupColor || this.settings.nodeColor;
+    return this.getBodyColor(color);
+  }
+
+  private updateNodeBodyAppearance(node: any, object: any): void {
+    if (!object) return;
+    const body = node.relation ? object.getObjectByName?.("gps-junction-body")
+      : !node.exists ? object.getObjectByName?.("gps-missing-node-body") : object;
+    if (!body?.material) return;
+    body.userData ??= {};
+    // Install once per scene body. Three's Raycaster also visits transparent
+    // and invisible objects, so zero alpha must not retain a ghost target.
+    if (!body.userData.gpsNodeBodyRaycast && typeof body.raycast === "function") {
+      const raycast = body.raycast.bind(body);
+      body.raycast = (raycaster: any, intersects: any): void => {
+        if (object.visible !== false && body.visible !== false && body.material.opacity > 0) raycast(raycaster, intersects);
+      };
+      body.userData.gpsNodeBodyRaycast = true;
+    }
+    if (!body.userData.gpsOwnedNodeBody) {
+      // The stock sphere's material is shared only among nodes of the same
+      // color/global alpha. Keep alpha-zero spheres from writing invisible
+      // depth while preserving their independent selection-shell children.
+      this.updateNodeDepthWrite(body.material);
+      return;
+    }
+    const sourceColor = node.relation ? this.getRelationColor(node.relation) : node.groupColor || this.settings.nodeColor;
+    const rawBrightness = this.settings.nodeBrightness;
+    const brightness = Number.isFinite(rawBrightness) ? Math.max(0, Math.min(2, rawBrightness)) : 1;
+    if (body.userData.gpsSourceColor !== sourceColor || body.userData.gpsBrightness !== brightness) {
+      body.material.color.set(this.getBodyColor(sourceColor));
+      body.userData.gpsSourceColor = sourceColor;
+      body.userData.gpsBrightness = brightness;
+    }
+    const opacity = clampOpacity(this.settings.nodeOpacity3D);
+    body.material.opacity = opacity;
+    this.updateNodeDepthWrite(body.material);
+    body.visible = opacity > 0;
+    const radius = Math.cbrt(this.getNodeVal(node)) * this.settings.nodeRelSize3D;
+    if (body.userData.gpsNodeBodyRadius !== radius) {
+      body.scale.setScalar(radius / body.userData.gpsBaseRadius);
+      body.userData.gpsNodeBodyRadius = radius;
+    }
+  }
+
+  private updateNodeDepthWrite(material: any): void {
+    material.userData ??= {};
+    if (material.userData.gpsOriginalDepthWrite === undefined) material.userData.gpsOriginalDepthWrite = material.depthWrite;
+    material.depthWrite = material.opacity > 0 && material.userData.gpsOriginalDepthWrite;
+  }
+
+  private syncNodeBodies(): void {
+    if (!this.graph) return;
+    for (const node of this.graph.graphData().nodes as any[]) this.updateNodeBodyAppearance(node, node.__threeObj);
+  }
+
   private getLinkWidth(link: any): number {
     const multiplier = this.settings.linkTypes[link.type]?.widthMultiplier ?? 1;
     return Math.max(0.1, this.settings.linkThickness * multiplier);
@@ -95,9 +178,9 @@ export class GraphRenderer3D {
     const width = this.getLinkWidth(link);
     const target = typeof link.target === "object" ? link.target : null;
     return {
-      color: config?.color ?? "#888",
+      color: this.getBodyColor(config?.color ?? "#888", true),
       width, style: config?.lineStyle ?? "solid",
-      opacity: Math.max(0, Math.min(1, this.settings.linkOpacity * (config?.opacity ?? 1))),
+      opacity: clampOpacity(this.settings.linkOpacity) * clampOpacity(config?.opacity ?? 1),
       showArrow: this.shouldShowArrow(link), arrowLength: 6 * (width / 1.5),
       targetRadius: target ? Math.cbrt(this.getNodeVal(target)) * this.settings.nodeRelSize3D
         * (target.relation ? 1.25 : 1) : 0,
@@ -184,17 +267,22 @@ export class GraphRenderer3D {
   private nodeThreeObjectFn = (node: any): any => {
     if (node.relation && this.THREE) return this.createJunctionObject(node);
     if (!node.exists && this.THREE) {
-      const val = this.getNodeVal(node);
-      const radius = Math.cbrt(val) * this.settings.nodeRelSize3D;
-      const color = node.groupColor || this.settings.nodeColor;
-      const geometry = new this.THREE.SphereGeometry(radius, 12, 8);
-      const wireframe = new this.THREE.WireframeGeometry(geometry);
-      const material = new this.THREE.LineBasicMaterial({
-        color,
-        transparent: true,
-        opacity: this.settings.nodeOpacity3D,
-      });
-      return new this.THREE.LineSegments(wireframe, material);
+      const radius = Math.cbrt(this.getNodeVal(node)) * this.settings.nodeRelSize3D;
+      const sphere = new this.THREE.SphereGeometry(radius, 12, 8);
+      const wireframe = new this.THREE.WireframeGeometry(sphere);
+      sphere.dispose();
+      const body = new this.THREE.LineSegments(wireframe, new this.THREE.LineBasicMaterial({
+        color: this.getNodeBodyColor(node), transparent: true,
+        opacity: clampOpacity(this.settings.nodeOpacity3D),
+      }));
+      body.name = "gps-missing-node-body";
+      body.userData.gpsOwnedNodeBody = true;
+      body.userData.gpsBaseRadius = radius;
+      const group = new this.THREE.Group();
+      group.name = "gps-missing-node";
+      group.add(body);
+      this.updateNodeBodyAppearance(node, group);
+      return group;
     }
     return undefined;
   };
@@ -218,12 +306,15 @@ export class GraphRenderer3D {
     const body = new this.THREE.Mesh(
       new this.THREE.OctahedronGeometry(radius * 1.25),
       new this.THREE.MeshBasicMaterial({
-        color: this.getRelationColor(node.relation), transparent: true,
-        opacity: this.settings.nodeOpacity3D,
+        color: this.getNodeBodyColor(node), transparent: true,
+        opacity: clampOpacity(this.settings.nodeOpacity3D),
       }),
     );
     body.name = "gps-junction-body";
+    body.userData.gpsOwnedNodeBody = true;
+    body.userData.gpsBaseRadius = radius;
     group.add(body);
+    this.updateNodeBodyAppearance(node, group);
     this.updateJunctionLabel(group, node.relation, radius);
     return group;
   }
@@ -234,8 +325,16 @@ export class GraphRenderer3D {
     object.userData.relationId = relation.id;
     object.userData.displayedMemberCount = count?.displayed ?? 0;
     object.userData.totalMemberCount = relation.members.length;
-    if (object.userData.labelText === text) return;
     const old = object.getObjectByName("gps-junction-label");
+    if (object.userData.labelText === text) {
+      if (old) {
+        const aspect = old.userData.aspectRatio ?? old.scale.x / old.scale.y;
+        const height = Math.max(16, radius * 2.5);
+        old.scale.set(height * aspect, height, 1);
+        old.position.y = radius * 1.25 + height / 2 + 3;
+      }
+      return;
+    }
     if (old) {
       object.remove(old);
       old.material.map?.dispose();
@@ -263,6 +362,7 @@ export class GraphRenderer3D {
     }));
     label.name = "gps-junction-label";
     label.userData.text = text;
+    label.userData.aspectRatio = canvas.width / canvas.height;
     const height = Math.max(16, radius * 2.5);
     label.scale.set(height * canvas.width / canvas.height, height, 1);
     label.position.y = radius * 1.25 + height / 2 + 3;
@@ -292,16 +392,17 @@ export class GraphRenderer3D {
         .width(rect.width)
         .height(rect.height)
         .backgroundColor("rgba(0,0,0,0)")
-        .nodeColor((node: any) => {
-          if (node.groupColor) return node.groupColor;
-          return this.settings.nodeColor;
-        })
+        .nodeColor((node: any) => this.getNodeBodyColor(node))
         .nodeLabel((node: any) => node.relation ? this.getJunctionLabel(node.relation) : node.name)
         .nodeVal((node: any) => this.getNodeVal(node))
         .nodeThreeObject(this.nodeThreeObjectFn)
+        .nodePositionUpdate((object: any, _position: any, node: any) => {
+          this.updateNodeBodyAppearance(node, object);
+          return false;
+        })
         .linkColor((link: any) => {
           const config = this.settings.linkTypes[link.type];
-          return config?.color ?? "#888";
+          return this.getBodyColor(config?.color ?? "#888", true);
         })
         .linkLabel((link: any) => {
           if (link.type === UNTYPED_LINK_KEY) return "";
@@ -321,7 +422,7 @@ export class GraphRenderer3D {
         // Stock arrows multiply alpha independently. Owned arrows apply exactly
         // the same global-times-type opacity as the spatial connection body.
         .linkDirectionalArrowLength(0)
-        .nodeOpacity(this.settings.nodeOpacity3D)
+        .nodeOpacity(clampOpacity(this.settings.nodeOpacity3D))
         .nodeRelSize(this.settings.nodeRelSize3D)
         .onNodeClick((node: any) => {
           this.selectNode(node);
@@ -431,6 +532,7 @@ export class GraphRenderer3D {
     const reused = new Set<any>();
     const retainedIds = new Set<string>();
     let visualMetadataChanged = false;
+    let representationChanged = false;
     const nodes = data.nodes.map((node) => {
       const exact: any = byId.get(node.id);
       const source: any = bySource.get(node.relation?.sourcePath ?? node.id);
@@ -441,6 +543,7 @@ export class GraphRenderer3D {
         relation: node.relation,
       };
       if (!old) return metadata;
+      representationChanged ||= old.exists !== node.exists || !!old.relation !== !!node.relation;
       visualMetadataChanged ||= old.exists !== node.exists || old.groupColor !== node.groupColor
         || old.linkCount !== node.linkCount || old.relation?.type !== node.relation?.type
         || old.relation?.id !== node.relation?.id || old.relation?.sourceName !== node.relation?.sourceName;
@@ -456,6 +559,7 @@ export class GraphRenderer3D {
       // existing nodes. A metadata refresh never resets graphData or alpha.
       this.syncSelectionHighlights();
       this.updateJunctionLabels();
+      if (representationChanged) this.graph.nodeThreeObject((node: any) => this.nodeThreeObjectFn(node));
       if (visualMetadataChanged) this.updateSettings();
       this.syncEnclosures();
       return;
@@ -484,7 +588,7 @@ export class GraphRenderer3D {
     // The library's graphData digest retains a reused node's custom scene
     // object. Projection changes must replace the sphere/octahedron accessor
     // while retaining that same node's layout state and force identity.
-    if (visualMetadataChanged) this.graph.nodeThreeObject((node: any) => this.nodeThreeObjectFn(node));
+    if (representationChanged) this.graph.nodeThreeObject((node: any) => this.nodeThreeObjectFn(node));
     this.disposeSpatialLinks();
     this.graph.graphData({ nodes, links });
     this.syncEnclosures();
@@ -500,12 +604,12 @@ export class GraphRenderer3D {
       spatial.updateAppearance(this.getLinkAppearance(link));
     }
     this.syncEnclosures();
+    this.syncNodeBodies();
     this.graph
-      .nodeColor((node: any) => node.groupColor || this.settings.nodeColor)
-      .nodeOpacity(this.settings.nodeOpacity3D)
+      .nodeColor((node: any) => this.getNodeBodyColor(node))
+      .nodeOpacity(clampOpacity(this.settings.nodeOpacity3D))
       .nodeRelSize(this.settings.nodeRelSize3D)
-      .nodeVal((node: any) => this.getNodeVal(node))
-      .nodeThreeObject((node: any) => this.nodeThreeObjectFn(node));
+      .nodeVal((node: any) => this.getNodeVal(node));
   }
 
   /** Only layout stepping pauses; WebGL rendering and navigation stay active. */
@@ -595,25 +699,36 @@ export class GraphRenderer3D {
     for (const node of this.graph.graphData().nodes as any[]) {
       const object = node.__threeObj;
       if (!object) { ready = false; continue; }
-      const previous = object.getObjectByName("gps-semantic-selection");
-      if (previous) {
-        object.remove(previous);
-        previous.geometry.dispose();
-        previous.material.dispose();
+      let shell = object.getObjectByName("gps-semantic-selection");
+      const highlighted = visible && (members.has(node.id) || node.relation?.id === selected.id);
+      const kind = node.relation ? "OctahedronGeometry" : "SphereGeometry";
+      if (shell && (!highlighted || shell.geometry.type !== kind)) {
+        object.remove(shell);
+        shell.geometry.dispose();
+        shell.material.dispose();
+        shell = null;
       }
-      if (!visible || (!members.has(node.id) && node.relation?.id !== selected.id)) continue;
+      if (!highlighted) continue;
       const radius = Math.cbrt(this.getNodeVal(node)) * this.settings.nodeRelSize3D;
-      const geometry = node.relation ? new this.THREE.OctahedronGeometry(radius * 1.55)
-        : new this.THREE.SphereGeometry(radius * 1.28, 16, 12);
-      const shell = new this.THREE.Mesh(geometry, new this.THREE.MeshBasicMaterial({
-        color: this.getRelationColor(selected), wireframe: true,
-        transparent: true, opacity: 0.95, depthWrite: false,
-      }));
-      shell.name = "gps-semantic-selection";
+      if (!shell) {
+        const geometry = node.relation ? new this.THREE.OctahedronGeometry(radius * 1.55)
+          : new this.THREE.SphereGeometry(radius * 1.28, 16, 12);
+        shell = new this.THREE.Mesh(geometry, new this.THREE.MeshBasicMaterial({
+          color: this.getRelationColor(selected), wireframe: true,
+          transparent: true, opacity: 0.95, depthWrite: false,
+        }));
+        shell.name = "gps-semantic-selection";
+        shell.userData.gpsBaseRadius = radius;
+        shell.raycast = () => {};
+        object.add(shell);
+      } else {
+        // Global body appearance leaves this inspection resource intact.
+        // Membership/size/type-color changes update its own independent style.
+        shell.material.color.set(this.getRelationColor(selected));
+        shell.scale.setScalar(radius / shell.userData.gpsBaseRadius);
+      }
       shell.userData.relationId = selected.id;
       shell.userData.directMember = members.has(node.id);
-      shell.raycast = () => {};
-      object.add(shell);
     }
     this.selectionDirty = !ready;
   }
@@ -631,10 +746,8 @@ export class GraphRenderer3D {
     applyNodeGroups(this.graph.graphData().nodes as GraphNode[], this.settings.nodeGroups);
     this.captureCamera();
     this.selectionDirty = true;
-    this.graph
-      .nodeColor((node: any) => node.groupColor || this.settings.nodeColor)
-      // A new accessor invalidates custom wireframes as well as default spheres.
-      .nodeThreeObject((node: any) => this.nodeThreeObjectFn(node));
+    this.syncNodeBodies();
+    this.graph.nodeColor((node: any) => this.getNodeBodyColor(node));
   }
 
   /** Update force parameters and reheat the simulation */
@@ -833,6 +946,8 @@ export class GraphRenderer3D {
     this.resizeObserver.disconnect();
     this.disposeSpatialLinks();
     this.disposeSpatialEnclosures();
+    this.nodeAppearanceColors?.clear();
+    this.relationAppearanceColors?.clear();
     if (this.graph) {
       if (typeof this.graph._destructor === "function") {
         this.graph._destructor();

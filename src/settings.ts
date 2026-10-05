@@ -1,7 +1,7 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type GraphPlusSemanticPlugin from "./main";
 import type { LinkArrowMode, LinkLineStyle, SettingDef, SettingEffect } from "./types";
-import { COLOR_PALETTE, UNTYPED_LINK_KEY, SETTING_DEFS, DEFAULT_LINK_TYPE_STYLE } from "./types";
+import { COLOR_PALETTE, UNTYPED_LINK_KEY, SETTING_DEFS, DEFAULT_LINK_TYPE_STYLE, GLOBAL_APPEARANCE_KEYS, resetGlobalAppearance, setAllRelationshipVisibility } from "./types";
 import { GraphLinkTypesView, VIEW_TYPE, onRegionContextChange } from "./graphView";
 
 export class GraphLinkTypesSettingTab extends PluginSettingTab {
@@ -11,6 +11,9 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
   private enclosureStatusEl: HTMLElement | null = null;
   private enclosureControls = new Map<SettingDef["key"], { setDisabled(disabled: boolean): unknown }>();
   private unsubscribeRegionContext: (() => void) | null = null;
+  private appearanceControls = new Map<SettingDef["key"], { setValue(value: number): unknown }>();
+  private relationshipVisibilityControls = new Map<string, { setValue(value: boolean): unknown }>();
+  private untypedVisibilityControl: { setValue(value: boolean): unknown } | null = null;
 
   constructor(app: App, plugin: GraphPlusSemanticPlugin) {
     super(app, plugin);
@@ -31,12 +34,35 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
       }
     }
     this.updateRegionAvailability();
+    this.syncGlobalAppearanceControls();
+    this.syncRelationshipVisibilityControls();
+  }
+
+  private syncRelationshipVisibilityControls(): void {
+    this.untypedVisibilityControl?.setValue(this.plugin.settings.showUntyped);
+    for (const [type, control] of this.relationshipVisibilityControls) {
+      const config = this.plugin.settings.linkTypes[type];
+      if (config) control.setValue(type === UNTYPED_LINK_KEY ? this.plugin.settings.showUntyped : config.visible);
+    }
+  }
+
+  private syncGlobalAppearanceControls(): void {
+    for (const key of GLOBAL_APPEARANCE_KEYS) {
+      this.appearanceControls.get(key)?.setValue(this.plugin.settings[key]);
+    }
   }
 
   display(): void {
     const { containerEl } = this;
     this.unsubscribeRegionContext?.();
-    this.unsubscribeRegionContext = onRegionContextChange(() => this.updateRegionAvailability());
+    this.unsubscribeRegionContext = onRegionContextChange(() => {
+      this.updateRegionAvailability();
+      this.syncGlobalAppearanceControls();
+      this.syncRelationshipVisibilityControls();
+    });
+    this.appearanceControls.clear();
+    this.relationshipVisibilityControls.clear();
+    this.untypedVisibilityControl = null;
     this.regionControls.clear();
     this.enclosureControls.clear();
     this.regionStatusEl = null;
@@ -63,18 +89,30 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Show untyped links")
       .setDesc("Show regular wikilinks that have no type annotation")
-      .addToggle((toggle) =>
+      .addToggle((toggle) => {
+        this.untypedVisibilityControl = toggle;
         toggle
           .setValue(this.plugin.settings.showUntyped)
           .onChange(async (value) => {
             this.plugin.settings.showUntyped = value;
-            await this.saveSettings("rebuild");
-          })
-      );
+            const config = this.plugin.settings.linkTypes[UNTYPED_LINK_KEY];
+            if (config) config.visible = value;
+            await this.saveSettings("rebuild", "both", "linkTypes");
+          });
+      });
 
     // --- Schema-driven sections ---
     new Setting(containerEl).setHeading().setName("Display");
     this.renderSettingsSection(containerEl, "display");
+    new Setting(containerEl)
+      .setName("Global appearance defaults")
+      .setDesc("Restore only node opacity, node brightness, relation opacity and relation brightness to 1. Keep colors, relationship styles, groups, selection and physics unchanged.")
+      .addButton((button) => button
+        .setButtonText("Reset global appearance")
+        .onClick(async () => {
+          resetGlobalAppearance(this.plugin.settings);
+          await this.saveSettings("visual", "both");
+        }));
 
     // Color pickers (manual — not in sidebar)
     new Setting(containerEl)
@@ -130,9 +168,21 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
     // --- Relationship type styling + physics ---
     new Setting(containerEl).setHeading().setName("Relationship types");
     containerEl.createEl("p", {
-      text: "Color, line patterns, width, opacity, arrows, distance and attraction apply to 2D and 3D. Effective 3D opacity is global Link opacity x type opacity; zero hides connections and arrows while retaining membership and springs. Unordered membership is always arrowless. Optional 2D regions and 3D enclosures have independent preferences.",
+      text: "Color, line patterns, width, opacity, arrows, distance and attraction apply to 2D and 3D. Effective link opacity in both views is global Relation opacity x type opacity; zero hides connections and arrows while retaining membership and springs. Unordered membership is always arrowless. Optional 2D regions and 3D enclosures have independent preferences.",
       cls: "setting-item-description",
     });
+
+    const visibility = new Setting(containerEl)
+      .setName("Relationship type visibility")
+      .setDesc("Turn all listed relationship types on or off while retaining their appearance and physics settings.");
+    for (const [label, visible] of [["All on", true], ["All off", false]] as const) {
+      visibility.addButton((button) => button
+        .setButtonText(label)
+        .onClick(async () => {
+          setAllRelationshipVisibility(this.plugin.settings, visible);
+          await this.saveSettings("rebuild", "both", "linkTypes");
+        }));
+    }
 
     const types = Object.keys(this.plugin.settings.linkTypes).sort((a, b) => {
       if (a === UNTYPED_LINK_KEY) return 1;
@@ -153,7 +203,8 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
             await this.saveSettings("visual");
           })
         )
-        .addToggle((toggle) =>
+        .addToggle((toggle) => {
+          this.relationshipVisibilityControls.set(type, toggle);
           toggle
             .setTooltip("Visible")
             .setValue(
@@ -162,14 +213,11 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
                 : config.visible
             )
             .onChange(async (value) => {
-              if (type === UNTYPED_LINK_KEY) {
-                this.plugin.settings.showUntyped = value;
-              } else {
-                config.visible = value;
-              }
-              await this.saveSettings("rebuild");
-            })
-        );
+              config.visible = value;
+              if (type === UNTYPED_LINK_KEY) this.plugin.settings.showUntyped = value;
+              await this.saveSettings("rebuild", "both", "linkTypes");
+            });
+        });
 
       new Setting(containerEl)
         .setName(`${displayName}: appearance`)
@@ -213,7 +261,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
 
       new Setting(containerEl)
         .setName(`${displayName}: opacity`)
-        .setDesc("Per-type opacity; multiplied by global Link opacity in 3D. Zero hides connections and arrows while retaining membership and springs.")
+        .setDesc("Per-type opacity; multiplied by global Relation opacity in both views. Zero hides connections and arrows while retaining membership and springs.")
         .addSlider((slider) => {
           slider
             .setLimits(0, 1, 0.05)
@@ -345,6 +393,7 @@ export class GraphLinkTypesSettingTab extends PluginSettingTab {
           .setName(def.label)
           .setDesc(def.desc ?? "")
           .addSlider((slider) => {
+            if (GLOBAL_APPEARANCE_KEYS.some((key) => key === def.key)) this.appearanceControls.set(def.key, slider);
             if (def.key === "regionFillOpacity") this.regionControls.set(def.key, slider);
             if (def.key === "enclosureFillOpacity3D") this.enclosureControls.set(def.key, slider);
             slider

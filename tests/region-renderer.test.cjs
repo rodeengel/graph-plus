@@ -12,6 +12,7 @@ const result = esbuild.buildSync({
       'export { GraphRenderer2D } from "./src/graphRenderer2D";',
       'export { DEFAULT_SETTINGS, createLinkTypeConfig } from "./src/types";',
       'export { forceSimulation } from "d3-force";',
+      'export { getAppearanceColor } from "./src/appearance";',
     ].join("\n"),
     resolveDir: path.resolve(__dirname, ".."), loader: "ts",
   },
@@ -22,6 +23,7 @@ compiled.filename = compiled.id;
 compiled.paths = module.paths;
 compiled._compile(result.outputFiles[0].text, compiled.filename);
 const { GraphRenderer2D, DEFAULT_SETTINGS, createLinkTypeConfig, forceSimulation } = compiled.exports;
+const { getAppearanceColor } = compiled.exports;
 
 function recordingContext() {
   const events = [], stack = [];
@@ -221,6 +223,86 @@ test("region geometry follows live node positions and visual updates preserve si
     renderer.nodes[1].x += 150;
     const after = renderer.getRelationRegions().find(region => region.relation.id === first.id).geometry.bounds.maxX;
     assert.ok(after > before + 100, "Presentation follows current node positions without replacing topology");
+  } finally {
+    renderer.simulation.stop();
+  }
+});
+
+test("shared global appearance scales Canvas bodies and arrows while labels, regions and selection keep independent appearance and quiet state", () => {
+  const { renderer, first, unrelated } = overlappingFixture();
+  const a = renderer.nodes.find(node => node.id === "a");
+  a.groupColor = "#804020";
+  unrelated.exists = false;
+  Object.assign(renderer.settings, { showLabels: true, showNodeLabels: true, nodeColor: "#204080",
+    nodeOpacity3D: 0.35, nodeBrightness: 0.5, linkOpacity: 0.4, relationBrightness: 1.5, animate: false });
+  renderer.settings.linkTypes.pair.opacity = 0.6;
+  const settingsBefore = structuredClone(renderer.settings);
+  renderer.selectedRelationId = first.id;
+  const nodes = renderer.nodes, links = renderer.links;
+  renderer.simulation = forceSimulation(nodes).alpha(0.027).stop();
+  Object.assign(a, { fx: a.x, fy: a.y });
+  const state = nodes.map(({ id, x, y, vx, vy, fx, fy }) => ({ id, x, y, vx, vy, fx, fy }));
+  const camera = renderer.transform = { x: 137, y: -61, k: 2 };
+  renderer.simulation.restart = () => { throw new Error("Global appearance restarted layout"); };
+  renderer.simulation.tick = () => { throw new Error("Global appearance stepped layout"); };
+  const atCircle = (event, node) => event.path[0]?.[0] === "arc" && event.path[0][1] === node.x && event.path[0][2] === node.y;
+  try {
+    renderer.ctx.events.length = 0;
+    renderer.updateSettings();
+    const events = renderer.ctx.events;
+    const entityFill = events.find(event => event.kind === "fill" && atCircle(event, a));
+    assert.equal(entityFill.alpha, 0.35);
+    assert.equal(entityFill.color, "#402010", "Group colors receive the shared node brightness without modifying their saved color");
+    const missingOutline = events.find(event => event.kind === "stroke" && atCircle(event, unrelated) && event.width === 1.5);
+    assert.equal(missingOutline.alpha, 0.35);
+    assert.equal(missingOutline.color, "#102040");
+    const junction = nodes.find(node => node.relation?.id === first.id);
+    const junctionOutline = events.find(event => event.kind === "stroke" && event.width === 2 && event.path[0]?.[0] === "moveTo"
+      && event.path[0][1] === junction.x && event.path.length === 5);
+    assert.equal(junctionOutline.alpha, 0.35);
+    assert.equal(junctionOutline.color, getAppearanceColor(renderer.settings.linkTypes.band.color, 0.5));
+    const linkColor = getAppearanceColor(renderer.settings.linkTypes.pair.color, 1.5);
+    const body = events.find(event => event.kind === "stroke" && event.color === linkColor && event.path[0]?.[0] === "moveTo" && event.path.length === 2);
+    const arrow = events.find(event => event.kind === "fill" && event.color === linkColor && event.path.length === 4);
+    assert.equal(body.alpha, 0.4 * 0.6);
+    assert.equal(arrow.alpha, body.alpha);
+    const labels = events.filter(event => event.kind === "label").map(event => ({ text: event.text, alpha: event.alpha, color: event.color }));
+    assert.ok(labels.some(label => label.text === "pair" && label.alpha === 0.6 && label.color === "#ff0000"));
+    assert.ok(labels.some(label => label.text.includes(`[${first.id}]`) && label.alpha === 1));
+    assert.ok(regionFills(events).every(fill => fill.alpha === 0.08 && fill.color === "#23aabb"));
+    const isMemberSelection = event => event.kind === "stroke" && event.width === 2.4 / camera.k
+      && first.members.some(id => atCircle(event, nodes.find(node => node.id === id)));
+    const selections = events.filter(isMemberSelection);
+    const selectedBorder = event => event.kind === "stroke" && event.width === 2.4 / camera.k && !isMemberSelection(event);
+    const borders = events.filter(selectedBorder);
+    assert.equal(selections.length, first.members.length);
+    assert.ok(selections.every(event => event.alpha === 1 && event.color === "#23aabb"));
+    assert.equal(borders.length, 1);
+    assert.equal(borders[0].alpha, 0.9);
+    assert.equal(borders[0].color, "#23aabb");
+    assert.deepEqual(renderer.settings, settingsBefore);
+    Object.assign(renderer.settings, { nodeOpacity3D: 0, linkOpacity: 0, nodeBrightness: 0, relationBrightness: 0 });
+    renderer.ctx.events.length = 0;
+    renderer.updateSettings();
+    const hiddenEvents = renderer.ctx.events;
+    assert.deepEqual(hiddenEvents.filter(event => event.kind === "label").map(event => ({ text: event.text, alpha: event.alpha, color: event.color })), labels,
+      "Global body opacity/brightness cannot dim labels or remove edge labels");
+    assert.ok(regionFills(hiddenEvents).every(fill => fill.alpha === 0.08 && fill.color === "#23aabb"));
+    const hiddenSelections = hiddenEvents.filter(isMemberSelection);
+    assert.equal(hiddenSelections.length, first.members.length);
+    assert.ok(hiddenSelections.every(event => event.alpha === 1 && event.color === "#23aabb"));
+    assert.deepEqual(hiddenEvents.filter(selectedBorder), borders, "Selected region boundaries retain independent color and opacity too");
+    const hiddenArrow = hiddenEvents.filter(event => event.kind === "fill" && event.path.length === 4);
+    assert.ok(hiddenArrow.every(event => event.alpha === 0), "Zero global link opacity includes any arrowhead drawing");
+    assert.ok(hiddenEvents.filter(event => event.kind === "fill" && atCircle(event, a)).every(event => event.alpha === 0));
+    assert.strictEqual(renderer.nodes, nodes);
+    assert.strictEqual(renderer.links, links);
+    assert.strictEqual(renderer.simulation.nodes(), nodes);
+    assert.strictEqual(renderer.transform, camera);
+    assert.equal(renderer.simulation.alpha(), 0.027);
+    assert.deepEqual(nodes.map(({ id, x, y, vx, vy, fx, fy }) => ({ id, x, y, vx, vy, fx, fy })), state);
+    assert.equal(a.groupColor, "#804020");
+    assert.equal(renderer.settings.linkTypes.pair.color, "#ff0000");
   } finally {
     renderer.simulation.stop();
   }

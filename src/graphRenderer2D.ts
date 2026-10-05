@@ -24,6 +24,7 @@ import type {
 import { UNTYPED_LINK_KEY, parseForceRules, getEffectiveLinkStrength, getMembershipLinkStrength, type ForceRule } from "./types";
 import { applyNodeGroups } from "./linkParser";
 import { buildRelationRegionGeometry, type RegionGeometry } from "./relationRegions";
+import { clampOpacity, getAppearanceColor } from "./appearance";
 
 type DisplayMemberIndex = { byId: Map<string, GraphNode>; bySource: Map<string, GraphNode> };
 
@@ -487,7 +488,7 @@ export class GraphRenderer2D {
 
   private getLinkOpacity(link: GraphLink): number {
     const opacity = this.getLinkConfig(link)?.opacity ?? 1;
-    return Math.max(0, Math.min(1, opacity));
+    return clampOpacity(this.settings.linkOpacity) * clampOpacity(opacity);
   }
 
   private shouldShowArrow(link: GraphLink): boolean {
@@ -558,18 +559,20 @@ export class GraphRenderer2D {
       if (source.x == null || target.x == null) continue;
 
       const config = this.getLinkConfig(link);
-      const color = config?.color ?? "#888";
+      const baseColor = config?.color ?? "#888";
+      const color = getAppearanceColor(baseColor, this.settings.relationBrightness);
       const linkWidth = this.getLinkWidth(link);
       const drawArrow = this.shouldShowArrow(link);
 
-      let alpha = this.getLinkOpacity(link);
+      let hoverAlpha = 1;
       if (hoveredId) {
         const sId = source.id;
         const tId = target.id;
         if (sId !== hoveredId && tId !== hoveredId) {
-          alpha *= 0.1;
+          hoverAlpha = 0.1;
         }
       }
+      const alpha = this.getLinkOpacity(link) * hoverAlpha;
 
       ctx.beginPath();
       ctx.strokeStyle = color;
@@ -609,6 +612,8 @@ export class GraphRenderer2D {
         }
 
         if (showLabels && link.kind !== "membership" && link.type !== UNTYPED_LINK_KEY && t.k > this.settings.edgeLabelThreshold) {
+          // Label visibility/color remains independent of the connection body.
+          ctx.globalAlpha = clampOpacity(config?.opacity ?? 1) * hoverAlpha;
           const labelX = (sx + 2 * cpx + tx) / 4;
           const labelY = (sy + 2 * cpy + ty) / 4;
           const fs = 1 / Math.max(t.k, 0.5);
@@ -619,7 +624,7 @@ export class GraphRenderer2D {
           ctx.lineWidth = 3 * fs;
           ctx.strokeStyle = this.resolvedBgColor;
           ctx.strokeText(link.type, labelX, labelY - 4);
-          ctx.fillStyle = color;
+          ctx.fillStyle = baseColor;
           ctx.fillText(link.type, labelX, labelY - 4);
         }
       } else {
@@ -635,6 +640,7 @@ export class GraphRenderer2D {
         }
 
         if (showLabels && link.kind !== "membership" && link.type !== UNTYPED_LINK_KEY && t.k > this.settings.edgeLabelThreshold) {
+          ctx.globalAlpha = clampOpacity(config?.opacity ?? 1) * hoverAlpha;
           const lmx = (sx + tx) / 2;
           const lmy = (sy + ty) / 2;
           const fs = 1 / Math.max(t.k, 0.5);
@@ -645,7 +651,7 @@ export class GraphRenderer2D {
           ctx.lineWidth = 3 * fs;
           ctx.strokeStyle = this.resolvedBgColor;
           ctx.strokeText(link.type, lmx, lmy - 4);
-          ctx.fillStyle = color;
+          ctx.fillStyle = baseColor;
           ctx.fillText(link.type, lmx, lmy - 4);
         }
       }
@@ -659,16 +665,18 @@ export class GraphRenderer2D {
     for (const node of this.nodes) {
       if (node.x == null || node.y == null) continue;
 
-      let alpha = 1;
+      let hoverAlpha = 1;
       if (hoveredId && !connectedToHover.has(node.id)) {
-        alpha = 0.15;
+        hoverAlpha = 0.15;
       }
 
       const isHovered = node.id === hoveredId;
       const radius = isHovered ? this.getNodeRadius(node) + 2 : this.getNodeRadius(node);
-      const fillColor = isHovered && !node.relation
+      const baseColor = isHovered && !node.relation
         ? this.settings.nodeColorHover
         : this.getNodeColor(node);
+      const fillColor = getAppearanceColor(baseColor, this.settings.nodeBrightness);
+      const alpha = clampOpacity(this.settings.nodeOpacity3D) * hoverAlpha;
 
       ctx.globalAlpha = alpha;
 
@@ -726,6 +734,7 @@ export class GraphRenderer2D {
       // Node label: always on hover; when showNodeLabels is on, also at zoom > threshold
       const showLabel = !!node.relation || isHovered || (showNodeLabels && t.k > textFadeThreshold);
       if (showLabel && node.name) {
+        ctx.globalAlpha = hoverAlpha;
         const fs = node.relation ? 1 / t.k : 1 / Math.max(t.k, 0.5);
         ctx.font = `${(node.relation ? 14 : 17) * fs}px sans-serif`;
         ctx.textAlign = "center";

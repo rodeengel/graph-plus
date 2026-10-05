@@ -85,7 +85,7 @@ const result = esbuild.buildSync({
     contents: [
       'export { GraphLinkTypesView, VIEW_TYPE } from "./src/graphView";',
       'export { GraphLinkTypesSettingTab } from "./src/settings";',
-      'export { DEFAULT_SETTINGS, createLinkTypeConfig } from "./src/types";',
+      'export { DEFAULT_SETTINGS, createLinkTypeConfig, UNTYPED_LINK_KEY } from "./src/types";',
     ].join("\n"),
     resolveDir: projectRoot,
     loader: "ts",
@@ -104,7 +104,7 @@ compiled.paths = module.paths;
 const nativeRequire = compiled.require.bind(compiled);
 compiled.require = (id) => id === "obsidian" ? obsidianHost : nativeRequire(id);
 compiled._compile(result.outputFiles[0].text, compiled.filename);
-const { GraphLinkTypesView, GraphLinkTypesSettingTab, VIEW_TYPE, DEFAULT_SETTINGS, createLinkTypeConfig } = compiled.exports;
+const { GraphLinkTypesView, GraphLinkTypesSettingTab, VIEW_TYPE, DEFAULT_SETTINGS, createLinkTypeConfig, UNTYPED_LINK_KEY } = compiled.exports;
 
 const copy = (value) => JSON.parse(JSON.stringify(value));
 global.document = { activeElement: null };
@@ -467,6 +467,237 @@ function sidebarControl(panel, label) {
   assert.ok(row, `Missing sidebar control ${label}`);
   return row.find(element => element.tag === "input");
 }
+
+function sidebarVisibility(panel, type) {
+  const name = type === UNTYPED_LINK_KEY ? "untyped" : type;
+  const header = panel.find(element => element.cls === "gps-link-type-header" && element.children.some(child => child.text === name));
+  assert.ok(header, `Missing relationship visibility row ${name}`);
+  return header.find(element => element.tag === "input" && element.type === "checkbox");
+}
+
+function tabBulkVisibility(f, label) {
+  const row = f.tab.containerEl.settings.find(setting => setting.name === "Relationship type visibility");
+  const button = row?.controls.find(control => control.kind === "button" && control.text === label);
+  assert.ok(button, `Missing settings bulk visibility action ${label}`);
+  return button;
+}
+
+test("both relationship bulk visibility actions batch current and newly discovered types without changing their configuration or editor navigation", async () => {
+  const f = fixture({ showUntyped: false, animate: false, nodeBrightness: 0.5, relationBrightness: 1.5,
+    nodeOpacity3D: 0.3, linkOpacity: 0.4, nodeGroups: [{ query: "file:A", color: "#112233" }] });
+  f.settings.linkTypes.future = createLinkTypeConfig("#4363d8", { lineStyle: "dotted", widthMultiplier: 2.2,
+    opacity: 0.35, arrowMode: "on", attraction: 0.2, distanceMultiplier: 1.8, forceRule: "down:1" });
+  f.notes["A.md"] += "\nfuture:: [[B]]";
+  await f.view.rebuildGraph();
+  f.tab.display();
+  const panel = realSidebar(f), types = section(panel, "Relationship Types").content;
+  const groups = f.settings.nodeGroups, groupContent = section(panel, "Groups").content;
+  const query = groupContent.find(element => element.className === "gps-group-query-input");
+  await section(panel, "Relationship Types").header.fire("click");
+  panel.scrollTop = 270;
+  const source = f.view.fullData, reads = f.reads();
+  const expectedLinkCount = f.view.renderer2D.data.links.length;
+  assert.ok(expectedLinkCount > 1);
+  assert.equal(Object.hasOwn(f.settings.linkTypes, UNTYPED_LINK_KEY), false);
+  const typeConfig = copy(f.settings.linkTypes);
+  const sidebarControls = Object.keys(typeConfig).map(type => [type, sidebarVisibility(panel, type)]);
+  const tabControls = Object.keys(typeConfig).map(type => [type, f.tab.relationshipVisibilityControls.get(type)]);
+  const appearance = { nodeOpacity3D: f.settings.nodeOpacity3D, nodeBrightness: f.settings.nodeBrightness,
+    linkOpacity: f.settings.linkOpacity, relationBrightness: f.settings.relationBrightness };
+  for (const [label, visible, action] of [
+    ["All off", false, () => types.find(element => element.tag === "button" && element.text === "All off").fire("click")],
+    ["All on", true, () => tabBulkVisibility(f, "All on").click()],
+    ["All off", false, () => tabBulkVisibility(f, "All off").click()],
+    ["All on", true, () => types.find(element => element.tag === "button" && element.text === "All on").fire("click")],
+  ]) {
+    f.calls.length = 0;
+    const saves = f.saved.length;
+    await action();
+    assert.equal(f.saved.length, saves + 1, `${label}: one persistence action`);
+    assert.deepEqual(f.calls.map(call => [call.mode, call.effect]), [["2d", "data"], ["3d", "data"]], `${label}: one existing filter push per renderer`);
+    assert.ok(f.calls.every(call => call.data.links.length === (visible ? expectedLinkCount : 0)));
+    for (const [type, config] of Object.entries(f.settings.linkTypes)) {
+      assert.deepEqual(config, { ...typeConfig[type], visible });
+    }
+    assert.ok(sidebarControls.every(([type, control]) => sidebarVisibility(panel, type) === control && control.checked === visible));
+    assert.ok(tabControls.every(([type, control]) => f.tab.relationshipVisibilityControls.get(type) === control && control.value === visible));
+    assert.equal(f.settings.showUntyped, false, "A separate global untyped preference stays unchanged when no untyped row exists");
+    assert.deepEqual(Object.fromEntries(Object.keys(appearance).map(key => [key, f.settings[key]])), appearance);
+    assert.strictEqual(f.view.fullData, source);
+    assert.equal(f.reads(), reads);
+    assert.strictEqual(f.settings.nodeGroups, groups);
+    assert.equal(section(panel, "Relationship Types").content, types);
+    assert.equal(types.style.display, "none");
+    assert.equal(section(panel, "Groups").content, groupContent);
+    assert.equal(groupContent.find(element => element.className === "gps-group-query-input"), query);
+    assert.equal(panel.scrollTop, 270);
+  }
+  f.tab.hide();
+});
+
+test("bulk visibility includes a discovered untyped row and individual or general untyped enable restores filtered links", async () => {
+  const f = fixture();
+  f.notes["B.md"] = "[[A]]";
+  await f.view.rebuildGraph();
+  f.tab.display();
+  const panel = realSidebar(f), types = section(panel, "Relationship Types").content;
+  const untyped = sidebarVisibility(panel, UNTYPED_LINK_KEY);
+  const tabUntyped = f.tab.relationshipVisibilityControls.get(UNTYPED_LINK_KEY);
+  const before = copy(f.settings.linkTypes[UNTYPED_LINK_KEY]);
+  const reads = f.reads();
+  const off = async () => {
+    f.calls.length = 0;
+    const saves = f.saved.length;
+    await tabBulkVisibility(f, "All off").click();
+    assert.equal(f.saved.length, saves + 1);
+    assert.deepEqual(f.calls.map(call => [call.mode, call.effect]), [["2d", "data"], ["3d", "data"]]);
+    assert.equal(f.settings.showUntyped, false);
+    assert.equal(f.settings.linkTypes[UNTYPED_LINK_KEY].visible, false);
+    assert.equal(untyped.checked, false);
+    assert.equal(tabUntyped.value, false);
+    assert.ok(f.calls.every(call => call.data.links.length === 0));
+  };
+  const restored = () => {
+    assert.equal(f.settings.showUntyped, true);
+    assert.deepEqual(f.settings.linkTypes[UNTYPED_LINK_KEY], { ...before, visible: true });
+    assert.equal(untyped.checked, true);
+    assert.equal(tabUntyped.value, true);
+    assert.ok(f.calls.filter(call => call.effect === "data").every(call => call.data.links.length === 1 && call.data.links[0].type === UNTYPED_LINK_KEY));
+    assert.equal(f.settings.linkTypes.rel.visible, false);
+    assert.equal(f.reads(), reads);
+    assert.equal(section(panel, "Relationship Types").content, types);
+  };
+  await off();
+  f.calls.length = 0;
+  untyped.checked = true;
+  await untyped.fire("change");
+  restored();
+  await off();
+  f.calls.length = 0;
+  await tabUntyped.change(true);
+  restored();
+  await off();
+  f.calls.length = 0;
+  await f.control("Show untyped links", "toggle").change(true);
+  restored();
+  f.tab.hide();
+});
+
+test("four shared global appearance sliders and both reset actions preserve colors, data, editor objects and navigation", async () => {
+  const f = fixture({ animate: false, nodeColor: "#804020", nodeGroups: [{ query: "file:A", color: "#112233" }] });
+  Object.assign(f.settings.linkTypes.rel, { color: "#4363d8", opacity: 0.25, lineStyle: "dotted" });
+  await f.view.rebuildGraph();
+  const data2D = f.view.renderer2D.data, data3D = f.view.renderer3D.data, reads = f.reads();
+  f.calls.length = 0;
+  const panel = realSidebar(f);
+  const types = section(panel, "Relationship Types").content;
+  const groupContent = section(panel, "Groups").content;
+  const query = groupContent.find(element => element.className === "gps-group-query-input");
+  await section(panel, "Relationship Types").header.fire("click");
+  panel.scrollTop = 250;
+  const groups = f.settings.nodeGroups, typeConfig = copy(f.settings.linkTypes);
+  const controls = [
+    ["Node opacity", "nodeOpacity3D", 0.35, 1],
+    ["Node brightness", "nodeBrightness", 0.5, 2],
+    ["Relation opacity", "linkOpacity", 0.45, 1],
+    ["Relation brightness", "relationBrightness", 1.5, 2],
+  ].map(([label, key, value, max]) => ({ label, key, value, max, sidebar: sidebarControl(panel, label), tab: f.control(label) }));
+  const saves = f.saved.length;
+  for (const control of controls) {
+    assert.equal(f.settings[control.key], 1);
+    assert.deepEqual(control.tab.limits, { min: 0, max: control.max, step: 0.05 });
+    await control.tab.change(control.value);
+    assert.equal(f.settings[control.key], control.value);
+    assert.equal(control.sidebar.value, String(control.value));
+  }
+  assert.equal(f.saved.length, saves + 4);
+  assert.deepEqual(f.calls.map(call => [call.mode, call.effect]), controls.flatMap(() => [["2d", "visual"], ["3d", "visual"]]));
+  f.calls.length = 0;
+  const sidebarReset = panel.find(element => element.tag === "button" && element.text === "Reset global appearance");
+  assert.ok(sidebarReset);
+  const beforeSidebarReset = f.saved.length;
+  await sidebarReset.fire("click");
+  assert.equal(f.saved.length, beforeSidebarReset + 1);
+  assert.deepEqual(f.calls.map(call => [call.mode, call.effect]), [["2d", "visual"], ["3d", "visual"]]);
+  for (const control of controls) {
+    assert.equal(f.settings[control.key], 1);
+    assert.equal(control.sidebar.value, "1");
+    assert.equal(control.tab.value, 1);
+    assert.strictEqual(sidebarControl(panel, control.label), control.sidebar);
+    assert.strictEqual(f.control(control.label), control.tab);
+    control.sidebar.value = String(control.value);
+    await control.sidebar.fire("input");
+  }
+  f.calls.length = 0;
+  const beforeTabReset = f.saved.length;
+  await f.control("Global appearance defaults", "button").click();
+  assert.equal(f.saved.length, beforeTabReset + 1);
+  assert.deepEqual(f.calls.map(call => [call.mode, call.effect]), [["2d", "visual"], ["3d", "visual"]]);
+  assert.ok(controls.every(control => f.settings[control.key] === 1 && control.sidebar.value === "1" && control.tab.value === 1));
+  assert.deepEqual(f.settings.linkTypes, typeConfig);
+  assert.equal(f.settings.nodeColor, "#804020");
+  assert.strictEqual(f.settings.nodeGroups, groups);
+  assert.equal(section(panel, "Relationship Types").content, types);
+  assert.equal(types.style.display, "none");
+  assert.equal(section(panel, "Groups").content, groupContent);
+  assert.equal(groupContent.find(element => element.className === "gps-group-query-input"), query);
+  assert.equal(panel.scrollTop, 250);
+  assert.strictEqual(f.view.renderer2D.data, data2D);
+  assert.strictEqual(f.view.renderer3D.data, data3D);
+  assert.equal(f.settings.animate, false);
+  assert.equal(f.reads(), reads);
+  assert.deepEqual(f.opened, []);
+  f.tab.hide();
+});
+
+test("global appearance profiles persist compatibility opacity keys and new brightness values without data refresh", async () => {
+  const f = fixture({ animate: false, nodeOpacity3D: 0.35, nodeBrightness: 0.5, linkOpacity: 0.45, relationBrightness: 1.5,
+    nodeGroups: [{ query: "file:A", color: "#112233" }] });
+  await f.view.rebuildGraph();
+  const profileEditor = new HostElement();
+  f.view.buildProfileEditor(profileEditor);
+  profileEditor.find(element => element.placeholder === "Profile name").value = "global appearance";
+  await profileEditor.find(element => element.text === "Save").fire("click");
+  const profile = copy(f.saved.at(-1).profiles[0]);
+  assert.equal(profile.snapshot.nodeOpacity3D, 0.35);
+  assert.equal(profile.snapshot.linkOpacity, 0.45);
+  assert.equal(profile.snapshot.nodeBrightness, 0.5);
+  assert.equal(profile.snapshot.relationBrightness, 1.5);
+  const data2D = f.view.renderer2D.data, data3D = f.view.renderer3D.data, reads = f.reads();
+  Object.assign(f.settings, { nodeOpacity3D: 1, nodeBrightness: 1, linkOpacity: 1, relationBrightness: 1 });
+  f.calls.length = 0;
+  const panel = realSidebar(f);
+  const groups = f.settings.nodeGroups, content = section(panel, "Groups").content;
+  const color = content.find(element => element.type === "color");
+  await section(panel, "Relationship Types").header.fire("click");
+  panel.scrollTop = 230;
+  await f.view.loadProfile(profile);
+  for (const [label, key] of [["Node opacity", "nodeOpacity3D"], ["Node brightness", "nodeBrightness"],
+    ["Relation opacity", "linkOpacity"], ["Relation brightness", "relationBrightness"]]) {
+    assert.equal(f.settings[key], profile.snapshot[key]);
+    assert.equal(sidebarControl(panel, label).value, String(profile.snapshot[key]));
+    assert.equal(f.control(label).value, profile.snapshot[key]);
+  }
+  assert.deepEqual(f.calls.map(call => [call.mode, call.effect]), [["2d", "visual"], ["3d", "visual"]]);
+  assert.strictEqual(f.view.renderer2D.data, data2D);
+  assert.strictEqual(f.view.renderer3D.data, data3D);
+  assert.strictEqual(f.settings.nodeGroups, groups);
+  assert.equal(section(panel, "Groups").content, content);
+  assert.equal(content.find(element => element.type === "color"), color);
+  assert.equal(section(panel, "Relationship Types").content.style.display, "none");
+  assert.equal(panel.scrollTop, 230);
+  assert.equal(f.settings.animate, false);
+  assert.equal(f.reads(), reads);
+  await f.view.loadProfile({ name: "legacy opacities", snapshot: { nodeOpacity3D: 0.2, linkOpacity: 0.3 } });
+  assert.equal(f.settings.nodeOpacity3D, 0.2);
+  assert.equal(f.settings.linkOpacity, 0.3);
+  assert.equal(f.settings.nodeBrightness, 0.5, "Legacy profiles do not reset newer absent brightness keys");
+  assert.equal(f.settings.relationBrightness, 1.5);
+  assert.strictEqual(f.view.renderer2D.data, data2D);
+  assert.strictEqual(f.view.renderer3D.data, data3D);
+  assert.equal(f.reads(), reads);
+  f.tab.hide();
+});
 
 test("region controls default off and redraw only 2D without replacing editors or opening menus", async () => {
   const f = fixture({ nodeGroups: [{ query: "file:A", color: "#112233" }] });
@@ -858,7 +1089,7 @@ test("3D-only contexts enable spatial patterns and opacity in sidebar and settin
   assert.notEqual(f.control("rel: appearance", "dropdown").disabled, true);
   assert.notEqual(f.control("rel: opacity").disabled, true);
   assert.notEqual(f.control("rel: width").disabled, true);
-  assert.match(f.view.relationshipStyleStatusEl.textContent, /global Link opacity x type opacity/);
+  assert.match(f.view.relationshipStyleStatusEl.textContent, /global Relation opacity x type opacity/);
   assert.match(f.view.relationshipStyleStatusEl.textContent, /zero hides the connection and its arrows/);
   f.view.renderer2D = null;
   await f.control("rel: appearance", "dropdown").change("dashed");

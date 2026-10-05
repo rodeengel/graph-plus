@@ -13,6 +13,8 @@ const result = esbuild.buildSync({
       'export { GraphRenderer2D } from "./src/graphRenderer2D";',
       'export { GraphRenderer3D } from "./src/graphRenderer3D";',
       'export { DEFAULT_SETTINGS, createLinkTypeConfig } from "./src/types";',
+      'export { clampOpacity, getAppearanceColor } from "./src/appearance";',
+      'export * as THREE from "three";',
       'export { zoom, zoomIdentity } from "d3-zoom";',
       'export { forceSimulation, forceLink, forceManyBody, forceCollide, forceX, forceY } from "d3-force";',
       'export { forceSimulation as forceSimulation3D, forceLink as forceLink3D, forceManyBody as forceManyBody3D, forceZ } from "d3-force-3d";',
@@ -32,6 +34,7 @@ compiled.filename = compiled.id;
 compiled.paths = module.paths;
 compiled._compile(result.outputFiles[0].text, compiled.filename);
 const { GraphRenderer2D, GraphRenderer3D, DEFAULT_SETTINGS, createLinkTypeConfig } = compiled.exports;
+const { clampOpacity, getAppearanceColor, THREE } = compiled.exports;
 const { forceSimulation, forceLink, forceManyBody, forceCollide, forceX, forceY, forceSimulation3D, forceLink3D, forceManyBody3D, forceZ } = compiled.exports;
 const { zoom, zoomIdentity } = compiled.exports;
 
@@ -85,6 +88,24 @@ function fixture2D(config, links, nodes, hoveredNode = null) {
 }
 
 const node = (id, x, y) => ({ id, name: id, x, y, exists: true, tags: [], properties: {}, isAttachment: false });
+
+test("global appearance clamps opacity while neutral, dim and bright colors preserve authored input", () => {
+  assert.equal(clampOpacity(0), 0);
+  assert.equal(clampOpacity(-2), 0);
+  assert.equal(clampOpacity(2), 1);
+  assert.equal(clampOpacity(NaN), 1);
+  assert.equal(clampOpacity(Infinity, 0.4), 0.4);
+  for (const color of ["#804020", "#AbC", "rebeccapurple", "rgb(128, 64, 32)"]) {
+    assert.equal(getAppearanceColor(color, 1), color, "Neutral brightness preserves the exact stored color string");
+    assert.equal(getAppearanceColor(color, NaN), color);
+  }
+  assert.equal(getAppearanceColor("#804020", 0), "#000000");
+  assert.equal(getAppearanceColor("#804020", -1), "#000000");
+  assert.equal(getAppearanceColor("#804020", 0.5), "#402010");
+  assert.equal(getAppearanceColor("#804020", 1.5), "#a07058");
+  assert.equal(getAppearanceColor("#804020", 2), "#c0a090");
+  assert.equal(getAppearanceColor("#804020", 3), "#c0a090", "Brightness cannot bleach a type color to white");
+});
 
 test("2D draws circular dots and curved dashes with independent width, opacity, and solid arrows", () => {
   const a = node("a", 10, 20);
@@ -165,7 +186,7 @@ test("2D group edits recolor existing nodes without replacing positions or rehea
   assert.equal(renderer.simulation.alpha(), 0.02);
 });
 
-test("3D group edits invalidate sphere and missing-node colors without replacing data or reheating", () => {
+test("3D group edits recolor retained sphere accessors and missing-node bodies without replacing data or reheating", () => {
   // Construct only the renderer shell; this does not claim a WebGL/Obsidian test.
   const previousDocument = global.document;
   const previousResizeObserver = global.ResizeObserver;
@@ -185,12 +206,7 @@ test("3D group edits invalidate sphere and missing-node colors without replacing
     if (previousResizeObserver === undefined) delete global.ResizeObserver;
     else global.ResizeObserver = previousResizeObserver;
   }
-  renderer.THREE = {
-    SphereGeometry: class { constructor(radius) { this.radius = radius; } },
-    WireframeGeometry: class { constructor(geometry) { this.geometry = geometry; } },
-    LineBasicMaterial: class { constructor(options) { Object.assign(this, options); } },
-    LineSegments: class { constructor(geometry, material) { Object.assign(this, { geometry, material }); } },
-  };
+  renderer.THREE = THREE;
   let data = { nodes: [], links: [] }, replacements = 0;
   let colorAccessor = null, objectAccessor = renderer.nodeThreeObjectFn;
   const graph = {
@@ -206,7 +222,6 @@ test("3D group edits invalidate sphere and missing-node colors without replacing
     cooldownTicks() { return graph; },
     warmupTicks() { return graph; },
     nodeThreeObject(accessor) {
-      assert.notStrictEqual(accessor, objectAccessor, "Wireframe colors require a fresh accessor");
       objectAccessor = accessor;
       return graph;
     },
@@ -218,6 +233,8 @@ test("3D group edits invalidate sphere and missing-node colors without replacing
   missing.properties = { affiliation: ["imbued"] };
   renderer.applyData({ nodes: [a, missing], links: [] });
   assert.deepEqual(data.nodes[0].properties, a.properties, "3D copies must retain property group queries");
+  const missingObject = data.nodes[1].__threeObj = objectAccessor(data.nodes[1]);
+  const missingBody = missingObject.getObjectByName("gps-missing-node-body");
   const existingData = data;
   const simulation = forceSimulation3D(data.nodes, 3).alpha(0.02).stop();
   const positions = data.nodes.map(({ x, y, z, vx, vy, vz }) => ({ x, y, z, vx, vy, vz }));
@@ -226,18 +243,20 @@ test("3D group edits invalidate sphere and missing-node colors without replacing
   assert.strictEqual(data, existingData);
   assert.equal(replacements, 1);
   assert.equal(colorAccessor(data.nodes[0]), "#ff0000");
-  assert.equal(objectAccessor(data.nodes[1]).material.color, "#ff0000");
+  assert.strictEqual(data.nodes[1].__threeObj, missingObject);
+  assert.equal(missingBody.material.color.getHexString(), "ff0000");
   assert.deepEqual(data.nodes.map(({ x, y, z, vx, vy, vz }) => ({ x, y, z, vx, vy, vz })), positions);
   assert.equal(simulation.alpha(), 0.02);
 
   renderer.settings.nodeGroups[0].color = "#00ff00";
   renderer.updateNodeGroups();
   assert.equal(colorAccessor(data.nodes[0]), "#00ff00");
-  assert.equal(objectAccessor(data.nodes[1]).material.color, "#00ff00");
+  assert.strictEqual(data.nodes[1].__threeObj, missingObject);
+  assert.equal(missingBody.material.color.getHexString(), "00ff00");
   renderer.settings.nodeGroups = [];
   renderer.updateNodeGroups();
   assert.equal(colorAccessor(data.nodes[0]), renderer.settings.nodeColor);
-  assert.equal(objectAccessor(data.nodes[1]).material.color, renderer.settings.nodeColor);
+  assert.equal(missingBody.material.color.getHexString(), renderer.settings.nodeColor.slice(1));
   assert.equal(replacements, 1);
   assert.equal(simulation.alpha(), 0.02);
 
@@ -246,6 +265,7 @@ test("3D group edits invalidate sphere and missing-node colors without replacing
   renderer.pendingData = { nodes: [a], links: [] };
   renderer.updateNodeGroups();
   assert.equal(a.groupColor, "#0000ff", "Group changes before 3D initialization must reach pending nodes");
+  missingBody.geometry.dispose(); missingBody.material.dispose();
 });
 
 test("both renderers respect arrow overrides and multiply semantic distance with legacy rules", () => {
