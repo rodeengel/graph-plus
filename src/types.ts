@@ -208,8 +208,10 @@ export interface GraphLinkTypesSettings {
   existingOnly: boolean;
   showOrphans: boolean;
   linkThickness: number;    // global base width; per-type widthMultiplier multiplies this
-  linkOpacity: number;      // 0-1, multiplies per-type opacity for 3D bodies and arrows
-  nodeOpacity3D: number;    // 0-1, opacity of nodes (3D)
+  linkOpacity: number;      // 0-1, global link/membership/arrow opacity in both views
+  nodeOpacity3D: number;    // compatibility key: entity/junction body opacity in both views
+  nodeBrightness: number;  // 0-2, multiplies entity/junction body colors
+  relationBrightness: number; // 0-2, multiplies link/membership/arrow colors
   nodeRelSize3D: number;    // sphere scale factor (3D)
   textFadeThreshold: number;
   edgeLabelThreshold: number;
@@ -247,6 +249,8 @@ export const DEFAULT_SETTINGS: GraphLinkTypesSettings = {
   linkThickness: 1.5,
   linkOpacity: 1.0,
   nodeOpacity3D: 1.0,
+  nodeBrightness: 1.0,
+  relationBrightness: 1.0,
   nodeRelSize3D: 4,
   textFadeThreshold: 1.0,
   edgeLabelThreshold: 0.5,
@@ -258,6 +262,23 @@ export const DEFAULT_SETTINGS: GraphLinkTypesSettings = {
   profiles: [],
   searchQuery: "",
 };
+
+export const GLOBAL_APPEARANCE_KEYS = [
+  "nodeOpacity3D", "nodeBrightness", "linkOpacity", "relationBrightness",
+] as const;
+
+/** Reset global multipliers without changing authored style or layout settings. */
+export function resetGlobalAppearance(settings: GraphLinkTypesSettings): void {
+  for (const key of GLOBAL_APPEARANCE_KEYS) settings[key] = DEFAULT_SETTINGS[key];
+}
+
+/** Batch visibility for discovered rows, preserving their individual semantics. */
+export function setAllRelationshipVisibility(settings: GraphLinkTypesSettings, visible: boolean): void {
+  for (const [type, config] of Object.entries(settings.linkTypes)) {
+    config.visible = visible;
+    if (type === UNTYPED_LINK_KEY) settings.showUntyped = visible;
+  }
+}
 
 // --- Declarative settings schema ---
 // Both the sidebar (graphView) and settings tab (settings) render from this.
@@ -287,6 +308,10 @@ export const SETTING_DEFS: SettingDef[] = [
   { key: "showOrphans", label: "Orphans", desc: "Show nodes without any visible links", section: "filters", type: "toggle", effect: "rebuild" },
 
   // Display (shared)
+  { key: "nodeOpacity3D", label: "Node opacity", desc: "Opacity of entity and relationship junction bodies in both views (0-1); labels and enclosures keep independent controls", section: "display", type: "slider", min: 0, max: 1, step: 0.05, effect: "visual", renderers: "both" },
+  { key: "nodeBrightness", label: "Node brightness", desc: "Multiplies entity and junction body colors after type/group color selection in both views (0-2); opacity, labels and enclosures stay independent", section: "display", type: "slider", min: 0, max: 2, step: 0.05, effect: "visual", renderers: "both" },
+  { key: "linkOpacity", label: "Relation opacity", desc: "Multiplies per-type opacity for ordinary links, membership connections and arrows in both views (0-1); zero hides them without changing semantics or springs", section: "display", type: "slider", min: 0, max: 1, step: 0.05, effect: "visual", renderers: "both" },
+  { key: "relationBrightness", label: "Relation brightness", desc: "Multiplies per-type colors for ordinary links, membership connections and arrows in both views (0-2); opacity, labels and enclosures stay independent", section: "display", type: "slider", min: 0, max: 2, step: 0.05, effect: "visual", renderers: "both" },
   { key: "showArrows", label: "Arrows", desc: "Default arrow behavior for link types set to Inherit", section: "display", type: "toggle", effect: "visual", renderers: "both" },
   { key: "scaleNodeByLinks", label: "Scale by connections", desc: "Make nodes with more links appear larger", section: "display", type: "toggle", effect: "visual", renderers: "both" },
   { key: "nodeSize", label: "Node size", desc: "Base radius of graph nodes (1–20)", section: "display", type: "slider", min: 1, max: 20, step: 1, effect: "visual", renderers: "both" },
@@ -306,8 +331,6 @@ export const SETTING_DEFS: SettingDef[] = [
   { key: "hyperrelationEnclosures3D", label: "Relationship enclosures", desc: "Passive spatial shells around displayed direct authored members in 3D junction mode. A nonmember inside remains a nonmember; shells do not intercept clicks or panning.", section: "display3d", type: "toggle", effect: "visual", renderers: "3d" },
   { key: "enclosureFillOpacity3D", label: "Enclosure fill opacity", desc: "Independent low-opacity fill for 3D relationship enclosures (0-0.3); zero hides the fill without changing membership or springs", section: "display3d", type: "slider", min: 0, max: 0.3, step: 0.01, effect: "visual", renderers: "3d" },
   { key: "nodeRelSize3D", label: "Node scale", desc: "Size of 3D node spheres (1–20)", section: "display3d", type: "slider", min: 1, max: 20, step: 1, effect: "visual", renderers: "3d" },
-  { key: "nodeOpacity3D", label: "Node opacity", desc: "Opacity of 3D nodes (0–1)", section: "display3d", type: "slider", min: 0, max: 1, step: 0.05, effect: "visual", renderers: "3d" },
-  { key: "linkOpacity", label: "Link opacity", desc: "Multiplies per-type opacity for 3D connections and arrows (0-1); zero hides both", section: "display3d", type: "slider", min: 0, max: 1, step: 0.05, effect: "visual", renderers: "3d" },
 
   // Forces
   { key: "centerForce", label: "Center force", desc: "Pull nodes toward center (0–2)", section: "forces", type: "slider", min: 0, max: 2, step: 0.05, effect: "force" },

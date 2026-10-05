@@ -15,6 +15,7 @@ const bundle = esbuild.buildSync({
       'export { GraphRenderer3D } from "./src/graphRenderer3D";',
       'export { SpatialLink3D } from "./src/spatialLink3D";',
       'export { SpatialEnclosure3D, buildSpatialEnclosureGeometry } from "./src/spatialEnclosure3D";',
+      'export { getAppearanceColor } from "./src/appearance";',
       'export { DEFAULT_SETTINGS, createLinkTypeConfig } from "./src/types";',
       'export { createSemanticGraph, projectGraphData, relationJunctionId } from "./src/semanticGraph";',
       'export { default as ThreeForceGraph } from "three-forcegraph";',
@@ -43,7 +44,7 @@ finally {
   if (priorWindow === undefined) delete global.window;
   else global.window = priorWindow;
 }
-const { GraphRenderer3D, SpatialLink3D, SpatialEnclosure3D, buildSpatialEnclosureGeometry,
+const { GraphRenderer3D, SpatialLink3D, SpatialEnclosure3D, buildSpatialEnclosureGeometry, getAppearanceColor,
   DEFAULT_SETTINGS, createLinkTypeConfig, createSemanticGraph,
   projectGraphData, relationJunctionId, ThreeForceGraph,
   TrackballControls, THREE } = compiled.exports;
@@ -968,4 +969,117 @@ test("3D enclosure toggles, independent opacity and selection preserve quiet xyz
     assert.equal(f.replacements(), replacements);
     assert.equal(f.reheats(), reheats);
   });
+});
+
+test("shared 3D global appearance preserves entity, missing and junction bodies while labels, halos and enclosures remain independent", async () => {
+  await fixture(async f => {
+    const source = fixtureData();
+    source.nodes.find(node => node.id === "Alice.md").groupColor = "#804020";
+    source.nodes.push({ ...entity("Ghost"), exists: false, groupColor: "#a0c020" });
+    source.links.push({ source: "Alice.md", target: "Ghost.md", type: "trusts", curvature: 0 });
+    source.semantic = createSemanticGraph(source.nodes, source.links, source.semantic.relations, []);
+    const authoredJSON = JSON.stringify(source.semantic);
+    await f.apply(projectGraphData(source, true));
+    f.renderer.setSelectedRelation(triad.id);
+    f.engine.tickFrame();
+    f.renderer.graph.scene().updateMatrixWorld(true);
+    const data = f.engine.graphData(), nodes = [...data.nodes], links = [...data.links];
+    nodes.forEach((node, index) => { node.vx = index * 0.02; node.vy = -index * 0.03; node.vz = index * 0.04; });
+    const alice = nodes.find(node => node.id === "Alice.md"), missing = nodes.find(node => node.id === "Ghost.md");
+    const junction = nodes.find(node => node.relation?.id === triad.id);
+    alice.fx = alice.x; alice.fy = alice.y; alice.fz = alice.z;
+    const bodyOf = node => node.relation ? node.__threeObj.getObjectByName("gps-junction-body")
+      : !node.exists ? node.__threeObj.getObjectByName("gps-missing-node-body") : node.__threeObj;
+    const bodyRecords = [alice, missing, junction].map(node => ({ node, object: node.__threeObj, body: bodyOf(node), geometry: bodyOf(node).geometry }));
+    const label = junction.__threeObj.getObjectByName("gps-junction-label");
+    const labelMaterial = label.material, labelMap = label.material.map, labelScale = label.scale.toArray();
+    const halo = alice.__threeObj.getObjectByName("gps-semantic-selection");
+    const haloMaterial = halo.material, haloColor = halo.material.color.getHexString(), haloOpacity = halo.material.opacity;
+    const enclosure = enclosureObject(f, triad.id), enclosureGeometry = enclosure.shell.geometry;
+    const enclosureColor = enclosure.shell.material.color.getHexString(), enclosureOpacity = enclosure.shell.material.opacity;
+    const state = stateOf(nodes), camera = cameraOf(f), replacements = f.replacements(), reheats = f.reheats();
+    const settingsBefore = structuredClone(f.settings);
+    const force = f.engine.d3Force("link"), forceLinks = force.links();
+    const springValues = links.map(link => [force.strength()(link), force.distance()(link)]);
+    const spatialLinks = links.map(link => f.renderer.spatialLinks.get(link));
+    assert.equal(bodyOf(alice).material.color.getHexString(), "402010");
+    assert.equal(bodyOf(missing).material.color.getHexString(), "506010");
+    assert.equal(bodyOf(junction).material.color.getHexString(), getAppearanceColor(f.settings.linkTypes.alliance.color, 0.5).slice(1));
+    assert.ok(bodyRecords.every(record => record.body.material.opacity === 0.6));
+    for (const link of links) {
+      const config = f.settings.linkTypes[link.type];
+      const { path, arrow } = spatialObjects(f, link);
+      assert.equal(path.material.opacity, 0.4 * (config?.opacity ?? 1));
+      assert.equal(arrow.material.opacity, path.material.opacity);
+      assert.equal(path.material.color.getHexString(), getAppearanceColor(config?.color ?? "#888", 1.5).replace(/^#/, ""));
+    }
+    const bodyRays = bodyRecords.map(record => {
+      let ray;
+      if (record.body.isMesh) {
+        record.body.geometry.computeBoundingSphere();
+        const center = record.body.geometry.boundingSphere.center.clone().applyMatrix4(record.body.matrixWorld);
+        const origin = center.clone().add(new THREE.Vector3(record.body.geometry.boundingSphere.radius * 3, 0.17, 0.23));
+        ray = new THREE.Raycaster(origin, center.clone().sub(origin).normalize());
+      } else {
+        const point = sampledPoint(record.body.geometry.getAttribute("position"), 0).applyMatrix4(record.body.matrixWorld);
+        ray = new THREE.Raycaster(point.clone().add(new THREE.Vector3(0, 20, 0)), new THREE.Vector3(0, -1, 0));
+      }
+      assert.ok(ray.intersectObject(record.body, false).length > 0, `${record.node.id}: a positive-opacity body has a real pointer target`);
+      return ray;
+    });
+    Object.assign(f.settings, { nodeOpacity3D: 0, linkOpacity: 0, nodeBrightness: 0, relationBrightness: 0 });
+    await f.visual();
+    for (let index = 0; index < bodyRecords.length; index++) {
+      const record = bodyRecords[index], body = bodyOf(record.node);
+      assert.strictEqual(record.node.__threeObj, record.object);
+      assert.strictEqual(body, record.body);
+      assert.strictEqual(body.geometry, record.geometry);
+      assert.equal(body.material.opacity, 0);
+      assert.equal(body.material.color.getHexString(), "000000");
+      assert.equal(bodyRays[index].intersectObject(body, false).length, 0, "Transparent bodies leave no ghost node hit surface");
+      assert.equal(body.material.depthWrite, false);
+    }
+    for (const link of links) {
+      const { path, arrow } = spatialObjects(f, link);
+      assert.equal(effectivelyVisible(path), false);
+      assert.equal(effectivelyVisible(arrow), false);
+      assert.equal(path.material.opacity, 0);
+      assert.equal(arrow.material.opacity, 0);
+      assert.equal(path.material.color.getHexString(), "000000");
+    }
+    assert.strictEqual(junction.__threeObj.getObjectByName("gps-junction-label"), label);
+    assert.strictEqual(label.material, labelMaterial);
+    assert.strictEqual(label.material.map, labelMap);
+    assert.deepEqual(label.scale.toArray(), labelScale);
+    assert.equal(label.material.opacity, 1);
+    assert.ok(effectivelyVisible(label));
+    assert.strictEqual(alice.__threeObj.getObjectByName("gps-semantic-selection"), halo);
+    assert.strictEqual(halo.material, haloMaterial);
+    assert.equal(halo.material.color.getHexString(), haloColor);
+    assert.equal(halo.material.opacity, haloOpacity);
+    assert.ok(effectivelyVisible(halo));
+    assert.strictEqual(enclosureObject(f, triad.id).shell.geometry, enclosureGeometry);
+    assert.equal(enclosure.shell.material.color.getHexString(), enclosureColor);
+    assert.equal(enclosure.shell.material.opacity, enclosureOpacity);
+    assert.ok(effectivelyVisible(enclosure.shell));
+    assert.strictEqual(f.engine.graphData(), data);
+    nodes.forEach((node, index) => assert.strictEqual(data.nodes[index], node));
+    links.forEach((link, index) => {
+      assert.strictEqual(data.links[index], link);
+      assert.strictEqual(f.renderer.spatialLinks.get(link), spatialLinks[index]);
+    });
+    assert.strictEqual(force.links(), forceLinks);
+    assert.deepEqual(links.map(link => [force.strength()(link), force.distance()(link)]), springValues);
+    assert.deepEqual(stateOf(nodes), state);
+    assert.deepEqual(cameraOf(f), camera);
+    assert.equal(f.replacements(), replacements);
+    assert.equal(f.reheats(), reheats);
+    assert.deepEqual(f.settings.linkTypes, settingsBefore.linkTypes);
+    assert.deepEqual(f.settings.nodeGroups, settingsBefore.nodeGroups);
+    assert.equal(f.settings.nodeColor, settingsBefore.nodeColor);
+    assert.equal(alice.groupColor, "#804020");
+    assert.equal(missing.groupColor, "#a0c020");
+    assert.equal(JSON.stringify(source.semantic), authoredJSON);
+  }, { hyperrelationEnclosures3D: true, nodeColor: "#204080", nodeOpacity3D: 0.6,
+    nodeBrightness: 0.5, linkOpacity: 0.4, relationBrightness: 1.5 });
 });

@@ -14,6 +14,7 @@ import {
   RelationDiagnostic,
 } from "./types";
 import { createSemanticGraph } from "./semanticGraph";
+import { compileSearchQuery } from "./searchQuery";
 
 // Matches [[wikilink]] or [[wikilink|alias]]
 const WIKILINK_RE = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
@@ -356,54 +357,11 @@ export function applyNodeGroups(nodes: GraphNode[], groups: NodeGroup[]): void {
 
 /**
  * Test if a node matches a query string.
- * Supports: path:prefix, file:pattern, tag:#name, [property:value], -negation, bare substring.
+ * Supports existing atoms plus implicit AND, uppercase OR, grouping and unary negation.
+ * Query compilation is bounded and cached across filtering and node-group matching.
  */
 export function matchesQuery(node: GraphNode, query: string): boolean {
-  const q = query.trim();
-  if (!q) return false;
-
-  // Negation
-  if (q.startsWith("-")) {
-    const inner = q.slice(1);
-    return inner.length > 0 && !matchesQuery(node, inner);
-  }
-
-  // path: prefix
-  if (q.startsWith("path:")) {
-    const prefix = q.slice(5).trim();
-    return (node.relation?.sourcePath ?? node.id).toLowerCase().startsWith(prefix.toLowerCase());
-  }
-
-  // file: pattern
-  if (q.startsWith("file:")) {
-    const pattern = q.slice(5).trim().toLowerCase();
-    return node.name.toLowerCase().includes(pattern);
-  }
-
-  // tag:#name
-  if (q.startsWith("tag:#")) {
-    const tag = q.slice(5).trim().toLowerCase();
-    return node.tags.some((t) => t.toLowerCase() === tag || t.toLowerCase().startsWith(tag + "/"));
-  }
-  // Also support tag:name (without #)
-  if (q.startsWith("tag:")) {
-    const tag = q.slice(4).trim().toLowerCase();
-    return node.tags.some((t) => t.toLowerCase() === tag || t.toLowerCase().startsWith(tag + "/"));
-  }
-
-  // [property:value] — frontmatter property match (strips quotes from value)
-  const propMatch = q.match(/^\[(\w+):(.+)\]$/);
-  if (propMatch) {
-    const prop = propMatch[1].toLowerCase();
-    const val = propMatch[2].trim().replace(/^["']|["']$/g, "").toLowerCase();
-    const nodeVals = node.properties[prop];
-    if (!nodeVals) return false;
-    return nodeVals.some((v) => v.includes(val));
-  }
-
-  // Bare text: match node name or path (case-insensitive substring)
-  const lower = q.toLowerCase();
-  return node.name.toLowerCase().includes(lower) || (node.relation?.sourcePath ?? node.id).toLowerCase().includes(lower);
+  return compileSearchQuery(query)(node);
 }
 
 /**

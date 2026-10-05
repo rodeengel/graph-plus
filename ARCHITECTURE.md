@@ -27,7 +27,7 @@ src/
   graphRenderer3D.ts   WebGL renderer via 3d-force-graph
   spatialLink3D.ts     Owned world-unit connection paths, patterns, opacity and arrows
   spatialEnclosure3D.ts Passive padded 3D convex-hull geometry and shell resources
-  spatialLink3D.ts     Owned spatial line paths, patterns and ordinary arrows
+  appearance.ts        Shared render-only RGB brightness and alpha composition
   settings.ts          Plugin settings tab
 styles.css             All CSS
 ```
@@ -95,6 +95,25 @@ Defaults preserve Graph Plus 0.1.0 behavior:
 
 `normalizeLinkTypeConfig()` migrates older saved settings by adding any missing semantic fields in memory during plugin load.
 
+### Relationship-type visibility
+
+The existing relationship-type lists in the sidebar and settings tab retain individual visibility toggles and add **All on** / **All off**. Each action changes only `visible` for the current `settings.linkTypes` keys, preserving every other type field and the four shared appearance values. The batch uses a single persistence call and the existing filter/visibility notification route; it does not infer relations or create new type records.
+
+### Shared Display controls
+
+Four global appearance controls share the Display section in both renderers and both settings surfaces:
+
+| Control | Saved key | Range / default | Rendering effect |
+|---|---|---|---|
+| Node opacity | `nodeOpacity3D` | 0-1 / 1 | Alpha for entity, unresolved-node, and junction bodies |
+| Relation opacity | `linkOpacity` | 0-1 / 1 | Global factor multiplied by each relationship type's opacity |
+| Node brightness | `nodeBrightness` | 0-2 / 1 | RGB adjustment for node bodies after choosing the existing type/group color |
+| Relation brightness | `relationBrightness` | 0-2 / 1 | RGB adjustment for connection paths and ordinary arrowheads |
+
+The existing `nodeOpacity3D` and `linkOpacity` keys remain compatible with saved settings; their controls now apply in both 2D and 3D. Brightness 1 preserves the chosen color. Below 1, rendered RGB is interpolated toward black; above 1, it is interpolated toward white by `(brightness - 1) / 2`, reaching a 50% white mix at 2. These derived colors do not change saved relationship-type or node-group colors, and brightness is independent of alpha.
+
+Labels, selection highlights, 2D region fills, and 3D enclosure fills keep their independent appearance. Reset appearance sets only these four global values to 1. Persistence and profiles include all four values; restoring only appearance uses a quiet visual update without a data rebuild or force reheat.
+
 ## Module Responsibilities
 
 ### `main.ts`
@@ -111,9 +130,13 @@ All shared interfaces (`GraphNode`, `GraphLink`, `LinkTypeConfig`, `GraphLinkTyp
 
 **Declarative schema**: `SETTING_DEFS` is an array of `SettingDef` objects that describe global toggles/sliders in the UI. Both the sidebar (`graphView.ts`) and the settings tab (`settings.ts`) render controls from this array.
 
-Relationship-type controls are dynamic and remain manually rendered because their rows are generated from vault data. Independent 3D enclosure preferences (`hyperrelationEnclosures3D`, default false, and `enclosureFillOpacity3D`, default 0.06 with range 0-0.3) are declarative visual-only 3D settings, separate from the existing 2D region preferences.
+Relationship-type controls are dynamic and remain manually rendered because their rows are generated from vault data. Shared node/relation opacity and brightness controls belong to the declarative Display schema and apply in both renderers. Independent 3D enclosure preferences (`hyperrelationEnclosures3D`, default false, and `enclosureFillOpacity3D`, default 0.06 with range 0-0.3) are declarative visual-only 3D settings, separate from the existing 2D region preferences.
 
 `parseForceRules()` remains available for advanced directional rules like `"down:0.5 right:1"` and legacy `distance:2x`.
+
+### `appearance.ts`
+
+Shared render-only alpha clamping and RGB brightness composition for both renderers. The neutral brightness value preserves the supplied color exactly. Hex picker colors use the bounded black/white interpolation described above, with a bounded cache; other CSS color strings remain unchanged. The helper never mutates authored settings or semantic records.
 
 ### `linkParser.ts`
 
@@ -148,7 +171,7 @@ The `ItemView` subclass that owns the UI.
 - **Vault event listeners** — listens for file create/delete/rename/metadata changes and debounces rebuilds (500 ms)
 - **Profiles** — save/load/delete named snapshots of graph settings; semantic relationship configs are part of the snapshot
 
-Settings-tab changes notify open semantic views using the same visual, force, filter and animation effects as sidebar controls. Relationship style and opacity changes reach both renderers through visual-only updates. Enclosure controls require the 3D junction context and update existing controls in place; the settings tab uses any available open 3D junction view, or the configured default mode when no graph is open. Loading a profile also reapplies the active renderer's force and appearance settings. Profiles include both enclosure preferences automatically through the schema; older snapshots with missing fields retain current/default values, and enclosure-only restoration avoids a data rebuild or force reheat.
+Settings-tab changes notify open semantic views using the same visual, force, filter and animation effects as sidebar controls. Relationship style and shared Display opacity/brightness changes reach both renderers through visual-only updates. The four-control appearance reset and appearance-only profile restoration retain node identity, coordinates, velocities, pins, camera, paused navigation, selection, and existing editors/menus. Enclosure controls require the 3D junction context and update existing controls in place; the settings tab uses any available open 3D junction view, or the configured default mode when no graph is open. Loading a profile also reapplies the active renderer's force and appearance settings. Profiles include both enclosure preferences automatically through the schema; older snapshots with missing fields retain current/default values, and enclosure-only restoration avoids a data rebuild or force reheat.
 
 ### `graphRenderer2D.ts`
 
@@ -158,7 +181,8 @@ Canvas-based renderer using `d3-force` for layout.
 - Handles zoom, drag, hover, click, and right-click context menu
 - Uses `forceX`/`forceY` instead of `forceCenter`
 - Draws per-type solid/dashed/dotted lines
-- Applies per-type width, opacity and arrow behavior
+- Applies per-type width and arrow behavior, with shared Relation opacity x per-type opacity
+- Applies shared node-body opacity and node/relation brightness without changing saved type/group colors, labels, selection highlights, or region fills
 - Uses a link-strength callback so each relationship type can multiply attraction independently
 - Uses a link-distance callback so each relationship type can multiply preferred distance independently
 - Custom `createLinkTypeForce()` still applies optional directional forces each tick
@@ -172,7 +196,8 @@ WebGL renderer wrapping the `3d-force-graph` library.
 - Non-existent nodes render as wireframe spheres
 - Renders owned Three.js spatial connections for per-type solid/dashed/dotted patterns, including curves and parallel links
 - Uses supported Three.js camera-facing wide lines in world units for global thickness x per-type width
-- Applies global 3D opacity x per-type opacity to the connection and its ordinary arrowheads; zero hides both without changing semantics or springs
+- Applies shared Relation opacity x per-type opacity to the connection and its ordinary arrowheads; zero hides both without changing semantics or springs
+- Applies shared node-body opacity to entity, unresolved-node, and junction bodies, plus independent node/relation brightness; labels, selection highlights, and enclosure fills remain separate
 - Preserves ordinary inherited/on/off arrows and suppresses unordered-membership arrows
 - Applies per-type distance and attraction physics
 - Adds default-off passive convex-hull enclosures in actual xyz coordinates, padded around displayed direct members only, with independent fill opacity

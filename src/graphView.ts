@@ -10,7 +10,7 @@ import type {
   LinkArrowMode,
   ExplicitRelation,
 } from "./types";
-import { UNTYPED_LINK_KEY, SETTING_DEFS } from "./types";
+import { UNTYPED_LINK_KEY, SETTING_DEFS, resetGlobalAppearance, setAllRelationshipVisibility } from "./types";
 import { buildGraphData, filterGraphData, countLinkTypes, applyNodeGroups } from "./linkParser";
 import { projectGraphData } from "./semanticGraph";
 import { GraphRenderer2D } from "./graphRenderer2D";
@@ -262,7 +262,7 @@ export class GraphLinkTypesView extends ItemView {
     // --- Search box ---
     const searchInput = panel.createEl("input", {
       type: "text",
-      placeholder: "Search... (path:, file:, tag:, [prop:val])",
+      placeholder: "Search... (path:, tag:, OR, parentheses)",
       cls: "gps-search-input",
     });
     searchInput.value = this.settings.searchQuery;
@@ -412,6 +412,17 @@ export class GraphLinkTypesView extends ItemView {
         this.sidebarSettingControls.set(def.key, control);
       }
     }
+    if (section === "display") {
+      parent.createDiv({ cls: "gps-group-help", text: "Node appearance applies to entity and junction bodies; relation appearance applies to links, membership connections and arrows. Brightness multiplies the existing type/group colors; opacity controls transparency independently. Labels and enclosures keep independent controls." });
+      const reset = parent.createEl("button", { text: "Reset global appearance", cls: "gps-sidebar-btn" });
+      reset.addEventListener("click", async () => {
+        resetGlobalAppearance(this.settings);
+        await this.saveSettings();
+        this.updateRelationshipVisuals();
+        this.syncSidebarSettings();
+        notifyRegionContextChange();
+      });
+    }
     if (section === "display2d") {
       this.regionStatusEl = parent.createDiv({ cls: "gps-group-help" });
       parent.createDiv({ cls: "gps-group-help", text: "Regions approximate displayed membership. A node inside a region is not necessarily a member; filters can hide the source junction and its region." });
@@ -428,7 +439,7 @@ export class GraphLinkTypesView extends ItemView {
     if (this.regionStatusEl) this.regionStatusEl.textContent = reason;
     const enclosure = this.getEnclosureAvailability();
     if (this.enclosureStatusEl) this.enclosureStatusEl.textContent = enclosure.reason;
-    if (this.relationshipStyleStatusEl) this.relationshipStyleStatusEl.textContent = "Color, line patterns, width, opacity, arrows, distance and attraction apply in both views. In 3D, effective opacity is global Link opacity x type opacity; zero hides the connection and its arrows while retaining membership and springs. Unordered membership is always arrowless. Optional 2D regions and 3D enclosures have independent preferences.";
+    if (this.relationshipStyleStatusEl) this.relationshipStyleStatusEl.textContent = "Color, line patterns, width, opacity, arrows, distance and attraction apply in both views. Effective link opacity in both views is global Relation opacity x type opacity; zero hides the connection and its arrows while retaining membership and springs. Unordered membership is always arrowless. Optional 2D regions and 3D enclosures have independent preferences.";
     for (const def of SETTING_DEFS) {
       const control = this.sidebarSettingControls.get(def.key);
       if (!control) continue;
@@ -473,7 +484,7 @@ export class GraphLinkTypesView extends ItemView {
   /** Keep an already-open graph and its sidebar in sync with the settings tab. */
   refreshSettings(effect: SettingEffect | "all" | "groups", renderers?: SettingDef["renderers"], key?: SettingDef["key"]): void {
     if (effect === "visual" || effect === "force" || effect === "animate"
-      || key === "hyperrelationRegions" || key === "regionFillOpacity" || key === "hypergraph2D" || key === "hypergraph3D") this.syncSidebarSettings();
+      || key === "linkTypes" || key === "hyperrelationRegions" || key === "regionFillOpacity" || key === "hypergraph2D" || key === "hypergraph3D") this.syncSidebarSettings();
     else this.buildFilterPanel();
     if (effect === "groups") {
       this.updateNodeGroups();
@@ -498,6 +509,17 @@ export class GraphLinkTypesView extends ItemView {
     content.empty();
     const help = content.createDiv({ cls: "gps-group-help" });
     this.relationshipStyleStatusEl = help;
+    const visibilityActions = content.createDiv({ cls: "gps-sidebar-buttons" });
+    for (const [label, visible] of [["All on", true], ["All off", false]] as const) {
+      const button = visibilityActions.createEl("button", { text: label, cls: "gps-sidebar-btn" });
+      button.addEventListener("click", async () => {
+        setAllRelationshipVisibility(this.settings, visible);
+        await this.saveSettings();
+        this.pushDataToRenderer();
+        this.syncSidebarSettings();
+        notifyRegionContextChange();
+      });
+    }
 
     const counts = countLinkTypes(this.fullData);
     const types = Object.keys(this.settings.linkTypes).sort((a, b) => {
@@ -517,13 +539,11 @@ export class GraphLinkTypesView extends ItemView {
       const checkbox = header.createEl("input", { type: "checkbox" });
       checkbox.checked = type === UNTYPED_LINK_KEY ? this.settings.showUntyped : config.visible;
       checkbox.addEventListener("change", async () => {
-        if (type === UNTYPED_LINK_KEY) {
-          this.settings.showUntyped = checkbox.checked;
-        } else {
-          config.visible = checkbox.checked;
-        }
+        config.visible = checkbox.checked;
+        if (type === UNTYPED_LINK_KEY) this.settings.showUntyped = checkbox.checked;
         await this.saveSettings();
         this.pushDataToRenderer();
+        notifyRegionContextChange();
       });
 
       const swatch = header.createEl("input", { type: "color", cls: "gps-color-swatch" });
@@ -643,9 +663,7 @@ export class GraphLinkTypesView extends ItemView {
         distance.value = String(config.distanceMultiplier);
         attraction.value = String(config.attraction);
         style.title = "Solid, dashed or dotted connections in both views, including spatial curves in 3D.";
-        opacity.title = this.currentMode === "3d"
-          ? "Global 3D Link opacity x type opacity. Zero hides connections and arrows while retaining membership and springs."
-          : "Per-type connection opacity. Zero hides connections and arrows while retaining membership and springs.";
+        opacity.title = "Global Relation opacity x type opacity in both views. Zero hides connections and arrows while retaining membership and springs.";
       });
     }
   }
