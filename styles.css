@@ -466,14 +466,58 @@
 }
 
 /* Authored relation inspection uses the same Obsidian theme and sidebar density. */
-.gps-relation-select {
-  display: block;
+.gps-relation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Host buttons have a fixed input height; wrapped relation text must size its box. */
+.gps-relation-select,
+.gps-relation-diagnostic button {
+  width: 100%;
+  text-align: left;
+}
+
+.gps-relation-select,
+.gps-relation-details button,
+.gps-relation-diagnostic button {
+  min-width: 0;
   max-width: 100%;
-  margin: 4px 0;
-  padding: 4px 8px;
+  height: auto;
+  min-height: var(--input-height, 32px);
+  max-height: none;
+  box-sizing: border-box;
   white-space: normal;
   overflow-wrap: anywhere;
-  text-align: left;
+  line-height: 1.35;
+}
+
+.gps-relation-select {
+  display: block;
+  flex-shrink: 0;
+  margin: 0;
+  padding: 6px 8px;
+}
+
+.gps-relation-title,
+.gps-relation-id {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.gps-relation-title {
+  font-weight: 500;
+}
+
+.gps-relation-id {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 0.8em;
 }
 
 .gps-relation-select[aria-pressed="true"] {
@@ -489,16 +533,32 @@
 
 .gps-relation-details,
 .gps-relation-diagnostic {
-  margin-top: 8px;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin-top: 10px;
   padding: 6px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
   background: var(--background-primary);
   font-size: 0.85em;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.gps-relation-details > div,
+.gps-relation-details li,
+.gps-relation-diagnostic > div {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
   overflow-wrap: anywhere;
 }
 
 .gps-relation-details ul {
+  max-width: 100%;
+  box-sizing: border-box;
   margin: 4px 0;
   padding-left: 18px;
 }
@@ -509,7 +569,4 @@
 
 .gps-relation-diagnostic button {
   margin-top: 4px;
-  max-width: 100%;
-  white-space: normal;
-  overflow-wrap: anywhere;
 }
