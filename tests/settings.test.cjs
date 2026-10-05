@@ -184,6 +184,41 @@ function section(panel, title) {
   return { header, content };
 }
 
+async function setSectionOpen(panel, title, open) {
+  const { header, content } = section(panel, title);
+  if ((content.style.display !== "none") !== open) await header.fire("click");
+  assert.equal(section(panel, title).content.style.display, open ? "" : "none");
+}
+
+function assertOpenSections(panel, titles = []) {
+  const sections = panel.children.filter(element => element.cls === "gps-filter-section");
+  assert.equal(sections.length, 10, "Every sidebar menu is present");
+  const open = new Set(titles);
+  for (const element of sections) {
+    const header = element.children.find(child => child.cls === "gps-collapsible-header");
+    const title = header.children.find(child => child.text?.startsWith(" ")).text.trim();
+    const content = element.children.find(child => child.cls === "gps-collapsible-content");
+    assert.equal(content.style.display, open.has(title) ? "" : "none", `${title}: retained menu state`);
+    open.delete(title);
+  }
+  assert.equal(open.size, 0, "All requested open menus exist");
+}
+
+test("fresh 2D and 3D sidebars start with every menu collapsed without changing saved settings", () => {
+  for (const defaultMode of ["2d", "3d"]) {
+    const f = fixture({ defaultMode });
+    const before = copy(f.settings);
+    const panel = realSidebar(f);
+    assertOpenSections(panel);
+    f.view.buildFilterPanel();
+    assertOpenSections(panel);
+    assert.deepEqual(f.settings, before);
+    assert.equal(f.saved.length, 0);
+    assert.deepEqual(f.calls, []);
+    f.tab.hide();
+  }
+});
+
 test("profile JSON roundtrip restores semantic fields and clears an advanced rule added later", async () => {
   const f = fixture({ animate: false, chargeStrength: -640, centerForce: 0.4 });
   Object.assign(f.settings.linkTypes.rel, {
@@ -260,25 +295,40 @@ test("settings-tab filtering and schema effects refresh an already-open graph", 
 test("section expansion and scroll survive settings-tab and structural sidebar refreshes", async () => {
   const f = fixture({ nodeGroups: [{ query: "file:A", color: "#112233" }] });
   const panel = realSidebar(f);
-  await section(panel, "Relationship Types").header.fire("click");
-  await section(panel, "Groups").header.fire("click");
+  await setSectionOpen(panel, "Filters", true);
+  await setSectionOpen(panel, "Relationship Types", true);
+  await setSectionOpen(panel, "Groups", true);
+  await f.view.rebuildGraph();
   panel.scrollTop = 280;
   await f.control("rel: opacity").change(0.4);
-  assert.equal(section(panel, "Relationship Types").content.style.display, "none");
-  assert.equal(section(panel, "Groups").content.style.display, "");
+  assertOpenSections(panel, ["Filters", "Relationship Types", "Groups"]);
+  assert.equal(panel.scrollTop, 280);
+  f.calls.length = 0;
+  await f.control("rel", "toggle").change(false);
+  assert.deepEqual(f.calls.map(call => [call.mode, call.effect]), [["2d", "data"], ["3d", "data"]]);
+  assert.ok(f.calls.every(call => call.data.links.length === 0));
+  assertOpenSections(panel, ["Filters", "Relationship Types", "Groups"]);
   assert.equal(panel.scrollTop, 280);
   f.settings.linkTypes.other = createLinkTypeConfig("#abcdef");
   f.view.refreshFilterPanel();
-  assert.equal(section(panel, "Relationship Types").content.style.display, "none");
-  assert.equal(section(panel, "Groups").content.style.display, "");
+  assertOpenSections(panel, ["Filters", "Relationship Types", "Groups"]);
   assert.equal(panel.scrollTop, 280);
+  await f.view.loadProfile({ name: "menu refresh", snapshot: {
+    searchQuery: "file:B",
+    linkTypeConfig: { rel: { visible: true } },
+  } });
+  assert.equal(f.settings.searchQuery, "file:B");
+  assert.equal(f.settings.linkTypes.rel.visible, true);
+  assertOpenSections(panel, ["Filters", "Relationship Types", "Groups"]);
+  assert.equal(panel.scrollTop, 280);
+  f.tab.hide();
 });
 
 test("sidebar group query and color edits keep their inputs and recolor without vault reads or layout updates", async () => {
   const f = fixture({ nodeGroups: [{ query: "file:A", color: "#112233" }] });
   const panel = realSidebar(f);
-  await section(panel, "Relationship Types").header.fire("click");
-  await section(panel, "Groups").header.fire("click");
+  await setSectionOpen(panel, "Relationship Types", false);
+  await setSectionOpen(panel, "Groups", true);
   panel.scrollTop = 250;
   const groupContent = section(panel, "Groups").content;
   const query = groupContent.find((element) => element.className === "gps-group-query-input");
@@ -318,8 +368,8 @@ test("vault rebuilds update relationship counts without replacing an active grou
 test("new relationship controls wait until relationship editing ends and retain navigation", async () => {
   const f = fixture({ nodeGroups: [{ query: "file:A", color: "#112233" }] });
   const panel = realSidebar(f);
-  await section(panel, "Relationship Types").header.fire("click");
-  await section(panel, "Groups").header.fire("click");
+  await setSectionOpen(panel, "Relationship Types", false);
+  await setSectionOpen(panel, "Groups", true);
   panel.scrollTop = 250;
   const query = section(panel, "Groups").content.find((element) => element.className === "gps-group-query-input");
   document.activeElement = section(panel, "Relationship Types").content.find((element) => element.type === "number");
@@ -381,8 +431,8 @@ function relationFixture(overrides = {}) {
 test("relation inspection retains full authored membership through filtering and opens the source note", async () => {
   const f = relationFixture();
   const panel = realSidebar(f);
-  await section(panel, "Relationship Types").header.fire("click");
-  await section(panel, "Groups").header.fire("click");
+  await setSectionOpen(panel, "Relationship Types", false);
+  await setSectionOpen(panel, "Groups", true);
   await f.view.rebuildGraph();
   f.settings.searchQuery = "file:Triad";
   f.view.pushDataToRenderer();
@@ -493,7 +543,7 @@ test("both relationship bulk visibility actions batch current and newly discover
   const panel = realSidebar(f), types = section(panel, "Relationship Types").content;
   const groups = f.settings.nodeGroups, groupContent = section(panel, "Groups").content;
   const query = groupContent.find(element => element.className === "gps-group-query-input");
-  await section(panel, "Relationship Types").header.fire("click");
+  await setSectionOpen(panel, "Relationship Types", false);
   panel.scrollTop = 270;
   const source = f.view.fullData, reads = f.reads();
   const expectedLinkCount = f.view.renderer2D.data.links.length;
@@ -593,7 +643,7 @@ test("four shared global appearance sliders and both reset actions preserve colo
   const types = section(panel, "Relationship Types").content;
   const groupContent = section(panel, "Groups").content;
   const query = groupContent.find(element => element.className === "gps-group-query-input");
-  await section(panel, "Relationship Types").header.fire("click");
+  await setSectionOpen(panel, "Relationship Types", false);
   panel.scrollTop = 250;
   const groups = f.settings.nodeGroups, typeConfig = copy(f.settings.linkTypes);
   const controls = [
@@ -669,7 +719,7 @@ test("global appearance profiles persist compatibility opacity keys and new brig
   const panel = realSidebar(f);
   const groups = f.settings.nodeGroups, content = section(panel, "Groups").content;
   const color = content.find(element => element.type === "color");
-  await section(panel, "Relationship Types").header.fire("click");
+  await setSectionOpen(panel, "Relationship Types", false);
   panel.scrollTop = 230;
   await f.view.loadProfile(profile);
   for (const [label, key] of [["Node opacity", "nodeOpacity3D"], ["Node brightness", "nodeBrightness"],
@@ -704,7 +754,7 @@ test("region controls default off and redraw only 2D without replacing editors o
   const panel = realSidebar(f);
   const groupContent = section(panel, "Groups").content;
   const query = groupContent.find(element => element.className === "gps-group-query-input");
-  await section(panel, "Relationship Types").header.fire("click");
+  await setSectionOpen(panel, "Relationship Types", false);
   panel.scrollTop = 260;
   assert.equal(f.settings.hyperrelationRegions, false);
   assert.equal(f.settings.regionFillOpacity, 0.08);
@@ -772,7 +822,7 @@ test("3D enclosures default off with independent fill and visual-only controls t
   const panel = realSidebar(f);
   const groupContent = section(panel, "Groups").content;
   const query = groupContent.find(element => element.className === "gps-group-query-input");
-  await section(panel, "Relationship Types").header.fire("click");
+  await setSectionOpen(panel, "Relationship Types", false);
   panel.scrollTop = 260;
   assert.equal(f.settings.hyperrelationEnclosures3D, false);
   assert.equal(f.settings.enclosureFillOpacity3D, 0.06);
@@ -859,7 +909,7 @@ test("3D enclosure profiles survive JSON reload and preserve paused data, inacti
   const groups = f.settings.nodeGroups;
   const content = section(panel, "Groups").content;
   const color = content.find(element => element.type === "color");
-  await section(panel, "Relationship Types").header.fire("click");
+  await setSectionOpen(panel, "Relationship Types", false);
   panel.scrollTop = 190;
   await f.view.loadProfile(f.settings.profiles[0]);
   assert.equal(f.settings.hyperrelationEnclosures3D, true);
@@ -898,7 +948,7 @@ test("region-only profiles survive JSON reload and preserve paused graph data an
   const groups = f.settings.nodeGroups;
   const content = section(panel, "Groups").content;
   const color = content.find(element => element.type === "color");
-  await section(panel, "Relationship Types").header.fire("click");
+  await setSectionOpen(panel, "Relationship Types", false);
   panel.scrollTop = 190;
   await f.view.loadProfile(f.settings.profiles[0]);
   assert.equal(f.settings.hyperrelationRegions, true);
@@ -925,7 +975,7 @@ test("region-only profiles survive JSON reload and preserve paused graph data an
 test("relation selection reports filtered member counts including zero and keeps the complete authored list", async () => {
   const f = relationFixture();
   const panel = realSidebar(f);
-  await section(panel, "Relationship Types").header.fire("click");
+  await setSectionOpen(panel, "Relationship Types", false);
   await f.view.rebuildGraph();
   const relation = f.view.fullData.semantic.relations[0];
   f.view.selectRelation(relation);
@@ -985,7 +1035,7 @@ test("3D inspection uses the complete authored relation with filtered counts, so
   const f = relationFixture({ defaultMode: "3d", animate: false });
   f.view.renderer2D = null;
   const panel = realSidebar(f);
-  await section(panel, "Relationship Types").header.fire("click");
+  await setSectionOpen(panel, "Relationship Types", false);
   panel.scrollTop = 220;
   await f.view.rebuildGraph();
   const relation = f.view.fullData.semantic.relations[0];
@@ -1019,7 +1069,7 @@ test("pause settings and sidebar controls reach the active 3D renderer without r
   f.view.renderer2D = null;
   const panel = realSidebar(f);
   const types = section(panel, "Relationship Types").content;
-  await section(panel, "Relationship Types").header.fire("click");
+  await setSectionOpen(panel, "Relationship Types", false);
   panel.scrollTop = 200;
   const pause = sidebarControl(panel, "Pause physics");
   await f.control("Pause physics", "toggle").change(true);
@@ -1054,7 +1104,7 @@ test("appearance-only 3D profiles survive JSON reload and keep paused data, inac
   const groups = f.settings.nodeGroups;
   const content = section(panel, "Groups").content;
   const query = content.find(element => element.className === "gps-group-query-input");
-  await section(panel, "Relationship Types").header.fire("click");
+  await setSectionOpen(panel, "Relationship Types", false);
   panel.scrollTop = 240;
   await f.view.loadProfile(stored);
   assert.equal(f.settings.hypergraph3D, true);

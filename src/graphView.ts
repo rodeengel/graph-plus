@@ -166,7 +166,7 @@ export class GraphLinkTypesView extends ItemView {
   private createCollapsibleSection(
     parent: HTMLElement,
     title: string,
-    defaultOpen: boolean = true
+    defaultOpen: boolean = false
   ): HTMLElement {
     const open = this.sectionOpen.get(title) ?? defaultOpen;
     const section = parent.createDiv({ cls: "gps-filter-section" });
@@ -273,7 +273,7 @@ export class GraphLinkTypesView extends ItemView {
     });
 
     // --- Schema-driven sections ---
-    const filtersContent = this.createCollapsibleSection(panel, "Filters", true);
+    const filtersContent = this.createCollapsibleSection(panel, "Filters");
     this.renderSettingsSection(filtersContent, "filters");
 
     // --- Relationship Types (manual — dynamic from data) ---
@@ -346,12 +346,14 @@ export class GraphLinkTypesView extends ItemView {
     parent.empty();
 
     parent.createDiv({ cls: "gps-group-help", text: `${relations.length} explicit relations · ${diagnostics.length} diagnostics` });
+    const list = parent.createDiv({ cls: "gps-relation-list" });
     for (const relation of relations) {
-      const button = parent.createEl("button", {
+      const button = list.createEl("button", {
         cls: "gps-relation-select",
-        text: `${relation.sourceName} · ${relation.id}`,
         attr: { "aria-pressed": String(this.selectedRelationId === relation.id) },
       });
+      button.createSpan({ cls: "gps-relation-title", text: relation.sourceName });
+      button.createSpan({ cls: "gps-relation-id", text: relation.id });
       button.addEventListener("click", () => this.selectRelation(relation));
     }
     if (selected) {
@@ -503,7 +505,7 @@ export class GraphLinkTypesView extends ItemView {
   }
 
   /** Build the Relationship Types section with visual + physics controls. */
-  private buildLinkTypesSection(panel: HTMLElement, content = this.createCollapsibleSection(panel, "Relationship Types", true)): void {
+  private buildLinkTypesSection(panel: HTMLElement, content = this.createCollapsibleSection(panel, "Relationship Types")): void {
     this.linkTypesContent = content;
     this.sidebarRelationshipSync.clear();
     content.empty();
