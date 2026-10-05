@@ -160,6 +160,11 @@ The legacy `distance:Nx` rule is multiplied with the explicit **Distance ×** se
 | `[prop:value]` | Notes with frontmatter property |
 | `bare text` | Notes with text in filename/path |
 | `-query` | Negate a query |
+| `path:Vampire/ OR path:Demon/` | Either path family |
+| `path:Vampire/ tag:kind/leader` | Both conditions |
+| `(path:Vampire/ OR path:Demon/) -tag:kind/npc` | Grouped alternatives with an exclusion |
+
+Graph search uses the same queries. Quote values containing spaces in compound queries, such as `file:"Autumn People" tag:character`. See [docs/search.md](docs/search.md) for precedence, compatibility, and the supported grammar.
 
 ## Development install alongside Graph Plus
 

@@ -262,7 +262,7 @@ export class GraphLinkTypesView extends ItemView {
     // --- Search box ---
     const searchInput = panel.createEl("input", {
       type: "text",
-      placeholder: "Search... (path:, file:, tag:, [prop:val])",
+      placeholder: "Search... (path:, tag:, OR, parentheses)",
       cls: "gps-search-input",
     });
     searchInput.value = this.settings.searchQuery;
